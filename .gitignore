@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!/env.example
+!/env.production
+uploads/*
+!uploads/.gitkeep
+notifications/logs/
+*.log

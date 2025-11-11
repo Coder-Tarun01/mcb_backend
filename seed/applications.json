@@ -1,0 +1,65 @@
+[
+  {
+    "id": "app1",
+    "userId": "1",
+    "jobId": "1",
+    "status": "reviewed",
+    "coverLetter": "I am very interested in this Senior Frontend Developer position at TechCorp Solutions. With my 4 years of experience in React and TypeScript, I believe I would be a great fit for your team.",
+    "resumeUrl": null,
+    "appliedAt": "2024-01-15T10:00:00Z"
+  },
+  {
+    "id": "app2",
+    "userId": "1",
+    "jobId": "2",
+    "status": "reviewed",
+    "coverLetter": "I am excited about the Full Stack Developer opportunity at StartupXYZ. My experience with Node.js and React aligns perfectly with your requirements.",
+    "resumeUrl": null,
+    "appliedAt": "2024-01-12T14:30:00Z"
+  },
+  {
+    "id": "app3",
+    "userId": "1",
+    "jobId": "3",
+    "status": "reviewed",
+    "coverLetter": "I would love to work as a React Developer for WebAgency Inc. The remote work opportunity is very appealing to me.",
+    "resumeUrl": null,
+    "appliedAt": "2024-01-10T09:15:00Z"
+  },
+  {
+    "id": "app4",
+    "userId": "1",
+    "jobId": "4",
+    "status": "rejected",
+    "coverLetter": "I am applying for the UI/UX Developer position at DesignStudio. I have strong design skills and experience with Figma and React.",
+    "resumeUrl": null,
+    "appliedAt": "2024-01-08T16:45:00Z"
+  },
+  {
+    "id": "app5",
+    "userId": "1",
+    "jobId": "5",
+    "status": "pending",
+    "coverLetter": "I am interested in the JavaScript Developer position at CodeCraft. As an entry-level developer, I am eager to learn and grow with your team.",
+    "resumeUrl": null,
+    "appliedAt": "2024-01-05T11:20:00Z"
+  },
+  {
+    "id": "app6",
+    "userId": "2",
+    "jobId": "1",
+    "status": "accepted",
+    "coverLetter": "I am very excited about this opportunity at TechCorp Solutions. My extensive experience in frontend development makes me a strong candidate.",
+    "resumeUrl": null,
+    "appliedAt": "2024-01-14T13:00:00Z"
+  },
+  {
+    "id": "app7",
+    "userId": "2",
+    "jobId": "6",
+    "status": "reviewed",
+    "coverLetter": "I am applying for the Backend Developer position. My experience with Node.js and databases would be valuable for your team.",
+    "resumeUrl": null,
+    "appliedAt": "2024-01-11T15:30:00Z"
+  }
+]

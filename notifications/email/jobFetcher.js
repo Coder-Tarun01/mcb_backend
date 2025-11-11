@@ -1,0 +1,210 @@
+const path = require('path');
+const { QueryTypes } = require('sequelize');
+
+let cachedModels;
+let cachedJobColumnInfo;
+let subscriberTableReady;
+
+function loadModels() {
+  if (cachedModels) {
+    return cachedModels;
+  }
+
+  const baseDir = path.resolve(__dirname, '../../');
+  const distModelsPath = path.join(baseDir, 'dist', 'models');
+  const srcModelsPath = path.join(baseDir, 'src', 'models');
+
+  try {
+    // Prefer compiled dist models if available (production/start script)
+    cachedModels = require(distModelsPath);
+    return cachedModels;
+  } catch (distErr) {
+    // Fallback to TypeScript source during development
+    try {
+      require('ts-node/register');
+    } catch (tsNodeErr) {
+      const error = new Error(
+        `Unable to load Sequelize models. Ensure the backend has been built (dist directory) ` +
+          `or install ts-node for development.
+Dist error: ${distErr.message}
+ts-node error: ${tsNodeErr.message}`
+      );
+      error.cause = { distErr, tsNodeErr };
+      throw error;
+    }
+
+    cachedModels = require(srcModelsPath);
+    return cachedModels;
+  }
+}
+
+function getSequelize() {
+  const models = loadModels();
+  if (!models.sequelize) {
+    throw new Error('Sequelize instance not found on loaded models module');
+  }
+  return models.sequelize;
+}
+
+async function inspectJobColumns() {
+  if (cachedJobColumnInfo) {
+    return cachedJobColumnInfo;
+  }
+
+  const sequelize = getSequelize();
+  try {
+    const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
+      type: QueryTypes.SELECT,
+    });
+
+    const columnEntries = columns
+      .map((col) => col.Field || col.column_name || col.COLUMN_NAME)
+      .filter(Boolean)
+      .map((name) => {
+        const normalized = String(name);
+        return {
+          raw: normalized,
+          lower: normalized.toLowerCase(),
+          safe: `\`${normalized}\``,
+        };
+      });
+
+    const findColumn = (...candidates) => {
+      for (const candidate of candidates) {
+        const match = columnEntries.find((entry) => entry.lower === String(candidate).toLowerCase());
+        if (match) {
+          return match.safe;
+        }
+      }
+      return null;
+    };
+
+    cachedJobColumnInfo = {
+      experienceColumn: findColumn('experienceLevel', 'experience'),
+      jobTypeColumn: findColumn('type', 'job_type'),
+      linkColumn: findColumn('applyUrl', 'link'),
+      createdColumn: findColumn('createdAt', 'created_at'),
+    };
+  } catch (error) {
+    cachedJobColumnInfo = {
+      experienceColumn: null,
+      jobTypeColumn: null,
+      linkColumn: null,
+      createdColumn: null,
+    };
+  }
+
+  return cachedJobColumnInfo;
+}
+
+async function getNewFresherJobs(limit = 5) {
+  const sequelize = getSequelize();
+  const columnInfo = await inspectJobColumns();
+
+  const experienceSelect = columnInfo.experienceColumn
+    ? `COALESCE(${columnInfo.experienceColumn}, '') AS experience`
+    : "'Not provided' AS experience";
+  const jobTypeColumn = columnInfo.jobTypeColumn || '`type`';
+  const jobTypeSelect = `${jobTypeColumn} AS jobType`;
+  const linkSelect = columnInfo.linkColumn ? `COALESCE(${columnInfo.linkColumn}, '') AS link` : "'' AS link";
+  const createdColumn = columnInfo.createdColumn || '`createdAt`';
+  const createdSelect = `${createdColumn} AS createdAt`;
+
+  const jobs = await sequelize.query(
+    `SELECT id, title, company, location, ${experienceSelect}, ${jobTypeSelect}, ${linkSelect}, notify_sent AS notifySent, ${createdSelect}
+     FROM jobs
+     WHERE ${jobTypeColumn} = 'Fresher' AND notify_sent = 0
+     ORDER BY ${createdColumn} DESC
+     LIMIT :limit`,
+    {
+      replacements: { limit },
+      type: QueryTypes.SELECT,
+    }
+  );
+
+  return jobs;
+}
+
+async function getSubscribedUsers() {
+  const sequelize = getSequelize();
+  await ensureSubscriberSupport();
+  const users = await sequelize.query(
+    `SELECT u.id, COALESCE(NULLIF(u.name, ''), NULLIF(s.name, ''), 'Subscriber') AS name, s.email
+     FROM fresher_notification_subscribers s
+     INNER JOIN users u ON u.id = s.user_id
+     WHERE s.email IS NOT NULL AND s.email <> ''`,
+    { type: QueryTypes.SELECT }
+  );
+  return users;
+}
+
+async function markJobsNotified(jobIds, transaction) {
+  if (!Array.isArray(jobIds) || jobIds.length === 0) {
+    return 0;
+  }
+
+  const sequelize = getSequelize();
+  const [result] = await sequelize.query(
+    `UPDATE jobs
+     SET notify_sent = 1
+     WHERE id IN (:jobIds)`,
+    {
+      replacements: { jobIds },
+      type: QueryTypes.BULKUPDATE,
+      transaction,
+    }
+  );
+
+  return typeof result === 'number' ? result : 0;
+}
+
+async function ensureSubscriberSupport() {
+  if (subscriberTableReady) {
+    return subscriberTableReady;
+  }
+
+  const sequelize = getSequelize();
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS fresher_notification_subscribers (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      user_id CHAR(36) DEFAULT NULL,
+      email VARCHAR(191) NOT NULL,
+      name VARCHAR(191) DEFAULT NULL,
+      full_name VARCHAR(191) DEFAULT NULL,
+      mobile_no VARCHAR(32) DEFAULT NULL,
+      branch VARCHAR(191) DEFAULT NULL,
+      experience VARCHAR(191) DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_fresher_subscribers_user (user_id),
+      UNIQUE KEY uq_fresher_subscribers_email (email)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    'ALTER TABLE fresher_notification_subscribers MODIFY COLUMN user_id CHAR(36) NULL',
+    'ALTER TABLE fresher_notification_subscribers ADD COLUMN IF NOT EXISTS full_name VARCHAR(191) DEFAULT NULL',
+    'ALTER TABLE fresher_notification_subscribers ADD COLUMN IF NOT EXISTS mobile_no VARCHAR(32) DEFAULT NULL',
+    'ALTER TABLE fresher_notification_subscribers ADD COLUMN IF NOT EXISTS branch VARCHAR(191) DEFAULT NULL',
+    'ALTER TABLE fresher_notification_subscribers ADD COLUMN IF NOT EXISTS experience VARCHAR(191) DEFAULT NULL',
+  ];
+
+  for (const statement of statements) {
+    try {
+      await sequelize.query(statement);
+    } catch (error) {
+      // Ignore errors from databases that do not support IF NOT EXISTS (e.g., MySQL < 8)
+      // or when column already exists.
+    }
+  }
+
+  subscriberTableReady = true;
+  return subscriberTableReady;
+}
+
+module.exports = {
+  getNewFresherJobs,
+  getSubscribedUsers,
+  markJobsNotified,
+  getSequelize,
+  ensureSubscriberSupport,
+};
+

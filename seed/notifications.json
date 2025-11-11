@@ -1,0 +1,42 @@
+[
+  {
+    "id": "1",
+    "userId": "1",
+    "title": "Welcome to mycareerbuild Job Portal",
+    "message": "Welcome to MyCareerBuild! Start exploring job opportunities and build your career.",
+    "type": "system",
+    "isRead": false
+  },
+  {
+    "id": "2", 
+    "userId": "1",
+    "title": "New Job Match Found",
+    "message": "We found 3 new jobs that match your profile. Check them out!",
+    "type": "job",
+    "isRead": false
+  },
+  {
+    "id": "3",
+    "userId": "1", 
+    "title": "Application Status Update",
+    "message": "Your application for Software Engineer at TechCorp has been reviewed.",
+    "type": "application",
+    "isRead": true
+  },
+  {
+    "id": "4",
+    "userId": "2",
+    "title": "New Application Received",
+    "message": "You have received a new application for the Frontend Developer position.",
+    "type": "application", 
+    "isRead": false
+  },
+  {
+    "id": "5",
+    "userId": "2",
+    "title": "Job Posting Expires Soon",
+    "message": "Your job posting for Senior Developer will expire in 3 days.",
+    "type": "job",
+    "isRead": false
+  }
+]
