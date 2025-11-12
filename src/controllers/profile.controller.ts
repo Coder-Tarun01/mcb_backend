@@ -1,50 +1,47 @@
-import type { Express, NextFunction, Request, Response } from 'express';
-import multer, { FileFilterCallback } from 'multer';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import multer from 'multer';
 import { User } from '../models';
-import type { UserAttributes } from '../models/User';
-import { AuthRequest } from '../middleware/auth';
-import { uploadToS3, deleteFromS3 } from '../services/s3Service';
+import type { AuthRequest } from '../middleware/auth';
+import { deleteFromS3, uploadToS3 } from '../services/s3Service';
 
-// Configure multer for S3 uploads (memory storage)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter(req: Request, file: Express.Multer.File, cb: FileFilterCallback): void {
-    if (file.fieldname === 'avatar') {
-      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-      if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Only JPEG, PNG, and WebP images are allowed for avatars'));
-      }
-      return;
-    }
+// --- Upload configuration --------------------------------------------------
 
-    const allowedTypes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    ];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PDF and Word documents are allowed for resumes'));
-    }
-  }
-});
+type FileField = 'avatarUrl' | 'resumeUrl' | 'companyLogo';
+type PrimaryProfileField =
+  | 'name'
+  | 'phone'
+  | 'companyName'
+  | 'skills'
+  | FileField;
+type AdditionalProfileField =
+  | 'professionalTitle'
+  | 'languages'
+  | 'age'
+  | 'currentSalary'
+  | 'expectedSalary'
+  | 'description'
+  | 'country'
+  | 'postcode'
+  | 'city'
+  | 'fullAddress';
 
-export const uploadResume = upload.single('resume');
-export const uploadAvatar = upload.single('avatar');
+type ProfileField = PrimaryProfileField | AdditionalProfileField;
 
-const SIMPLE_STRING_FIELDS = ['name', 'phone', 'companyName'] as const;
-type SimpleStringField = (typeof SIMPLE_STRING_FIELDS)[number];
+type ProfileUpdatePayload = Partial<Record<ProfileField, unknown>> & {
+  skills?: string[];
+};
 
-const FILE_URL_FIELDS = ['avatarUrl', 'resumeUrl', 'companyLogo'] as const;
-type FileUrlField = (typeof FILE_URL_FIELDS)[number];
-
-const ADDITIONAL_FIELDS = [
+const fileFields: FileField[] = ['avatarUrl', 'resumeUrl', 'companyLogo'];
+const primaryFields: ProfileField[] = [
+  'name',
+  'phone',
+  'companyName',
+  'skills',
+  'avatarUrl',
+  'resumeUrl',
+  'companyLogo'
+];
+const additionalFields: AdditionalProfileField[] = [
   'professionalTitle',
   'languages',
   'age',
@@ -55,67 +52,144 @@ const ADDITIONAL_FIELDS = [
   'postcode',
   'city',
   'fullAddress'
-] as const;
-type AdditionalField = (typeof ADDITIONAL_FIELDS)[number];
+];
 
-type MutablePartialUser = Partial<UserAttributes>;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (
+    req: Request,
+    file: Express.Multer.File,
+    cb: multer.FileFilterCallback
+  ) => {
+    const allowedAvatarTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp'
+    ];
+    const allowedResumeTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
 
-function getAuthUserId(req: Request): string | undefined {
-  return (req as AuthRequest).user?.id;
-}
+    if (file.fieldname === 'avatar') {
+      if (allowedAvatarTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only JPEG, PNG, and WebP images are allowed for avatars'));
+      }
+      return;
+    }
 
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
-}
+    if (allowedResumeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF and Word documents are allowed for resumes'));
+    }
+  }
+});
 
-function sanitizeProfilePayload(body: unknown): MutablePartialUser {
+export const uploadResume: RequestHandler = upload.single('resume');
+export const uploadAvatar: RequestHandler = upload.single('avatar');
+
+// --- Helpers ----------------------------------------------------------------
+
+const getAuthUserId = (req: Request): string | number | undefined =>
+  (req as AuthRequest).user?.id;
+
+const isString = (value: unknown): value is string => typeof value === 'string';
+
+const isFileField = (field: ProfileField): field is FileField =>
+  fileFields.includes(field as FileField);
+
+const isValidFileUrl = (value: string): boolean =>
+  value.startsWith('https://') || value.startsWith('/uploads/');
+
+const sanitizeProfilePayload = (body: unknown): ProfileUpdatePayload => {
+  const result: ProfileUpdatePayload = {};
+
   if (!body || typeof body !== 'object') {
-    return {};
+    return result;
   }
 
-  const source = body as Record<string, unknown>;
-  const result: MutablePartialUser = {};
+  const payload = body as Record<string, unknown>;
 
-  for (const field of SIMPLE_STRING_FIELDS) {
-    const value = source[field];
-    if (isString(value) && value.trim().length > 0) {
-      result[field] = value.trim();
+  for (const field of primaryFields) {
+    const value = payload[field];
+    if (value === undefined || value === null) continue;
+
+    if (field === 'skills') {
+      if (Array.isArray(value)) {
+        const normalizedSkills = value
+          .filter(isString)
+          .map((skill) => skill.trim())
+          .filter(Boolean);
+        if (normalizedSkills.length > 0) {
+          result.skills = normalizedSkills;
+        }
+      } else if (isString(value) && value.trim()) {
+        result.skills = [value.trim()];
+      }
+      continue;
     }
-  }
 
-  for (const field of FILE_URL_FIELDS) {
-    const value = source[field];
-    if (
-      isString(value) &&
-      (value.startsWith('https://') || value.startsWith('/uploads/'))
-    ) {
-      result[field] = value;
+    if (isFileField(field)) {
+      if (isString(value) && isValidFileUrl(value)) {
+        result[field] = value;
+      } else {
+        console.warn(`[profile] Invalid URL format for ${field}:`, value);
+      }
+      continue;
     }
-  }
 
-  const skillsValue = source.skills;
-  if (Array.isArray(skillsValue)) {
-    const normalized = skillsValue
-      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-      .map((entry) => entry.trim());
-    if (normalized.length > 0) {
-      result.skills = normalized;
-    }
-  } else if (isString(skillsValue) && skillsValue.trim().length > 0) {
-    result.skills = [skillsValue.trim()];
-  }
-
-  for (const field of ADDITIONAL_FIELDS) {
-    const value = source[field];
     if (isString(value)) {
-      result[field] = value;
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        result[field] = trimmed;
+      }
+      continue;
     }
+
+    result[field] = value;
+  }
+
+  for (const field of additionalFields) {
+    const value = payload[field];
+    if (value === undefined || value === null) continue;
+
+    if (isString(value)) {
+      const trimmed = value.trim();
+      if (trimmed.length > 0) {
+        result[field] = trimmed;
+      }
+      continue;
+    }
+
+    result[field] = value;
   }
 
   return result;
-}
+};
 
-export async function getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+const extractS3Key = (url: string): string | null => {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.replace(/^\/+/, '');
+  } catch {
+    const [, key] = url.split('.amazonaws.com/');
+    return key ?? null;
+  }
+};
+
+// --- Controllers ------------------------------------------------------------
+
+export const getProfile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) {
@@ -131,12 +205,16 @@ export async function getProfile(req: Request, res: Response, next: NextFunction
 
     const { password, ...profile } = user.toJSON();
     res.json(profile);
-  } catch (error: unknown) {
+  } catch (error) {
     next(error);
   }
-}
+};
 
-export async function updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+export const updateProfile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) {
@@ -144,9 +222,8 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
       return;
     }
 
-    console.log('🔍 Profile Update Request:', {
+    console.log('[profile] Update request received', {
       userId,
-      updateData: req.body,
       timestamp: new Date().toISOString()
     });
 
@@ -156,21 +233,16 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
       return;
     }
 
-    console.log('📊 Current User Data:', user.toJSON());
-
     const updateData = sanitizeProfilePayload(req.body);
-
-    console.log('📝 Filtered Update Data:', updateData);
+    console.log('[profile] Update payload', updateData);
 
     try {
-      await user.update(updateData);
-      console.log('✅ Database Update Completed');
+      await user.update(updateData as Record<string, unknown>);
     } catch (updateError) {
-      console.error('❌ Database Update Failed:', updateError);
-      const message = updateError instanceof Error ? updateError.message : 'Unknown error';
+      console.error('[profile] Failed to update user', updateError);
       res.status(500).json({
         message: 'Failed to update profile in database',
-        error: message
+        error: updateError instanceof Error ? updateError.message : 'Unknown error'
       });
       return;
     }
@@ -184,21 +256,23 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
       return;
     }
 
-    console.log('🔄 Updated User Data from DB:', updatedUser.toJSON());
-
     res.json({
       success: true,
       message: 'Profile updated successfully',
       user: updatedUser.toJSON(),
       updatedFields: Object.keys(updateData)
     });
-  } catch (error: unknown) {
-    console.error('❌ Profile Update Error:', error);
+  } catch (error) {
+    console.error('[profile] Update error', error);
     next(error);
   }
-}
+};
 
-export async function uploadResumeHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export const uploadResumeHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) {
@@ -228,9 +302,13 @@ export async function uploadResumeHandler(req: Request, res: Response, next: Nex
   } catch (error) {
     next(error);
   }
-}
+};
 
-export async function uploadAvatarHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+export const uploadAvatarHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) {
@@ -249,27 +327,22 @@ export async function uploadAvatarHandler(req: Request, res: Response, next: Nex
       return;
     }
 
-    console.log('🔄 Uploading avatar to S3...', {
-      userId,
-      fileName: req.file.originalname,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype
-    });
+    const existingAvatarUrl =
+      typeof user.avatarUrl === 'string' ? user.avatarUrl : undefined;
 
-    if (user.avatarUrl && user.avatarUrl.includes('amazonaws.com')) {
+    if (existingAvatarUrl && existingAvatarUrl.includes('amazonaws.com')) {
       try {
-        const urlParts = user.avatarUrl.split('/');
-        const s3Key = urlParts.slice(3).join('/');
-        await deleteFromS3(s3Key);
-        console.log('🗑️ Deleted old avatar from S3:', s3Key);
+        const s3Key = extractS3Key(existingAvatarUrl);
+        if (s3Key) {
+          await deleteFromS3(s3Key);
+          console.log('[profile] Deleted previous avatar from S3', s3Key);
+        }
       } catch (deleteError) {
-        console.warn('⚠️ Failed to delete old avatar:', deleteError);
+        console.warn('[profile] Failed to delete previous avatar', deleteError);
       }
     }
 
     const uploadResult = await uploadToS3(req.file, 'avatars');
-    console.log('✅ Avatar uploaded to S3:', uploadResult);
-
     await user.update({ avatarUrl: uploadResult.url });
 
     res.json({
@@ -278,16 +351,19 @@ export async function uploadAvatarHandler(req: Request, res: Response, next: Nex
       s3Key: uploadResult.key
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('❌ Avatar upload error:', error);
+    console.error('[profile] Avatar upload error', error);
     res.status(500).json({
       message: 'Failed to upload avatar',
-      error: message
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
-}
+};
 
-export async function getSkills(req: Request, res: Response, next: NextFunction): Promise<void> {
+export const getSkills = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) {
@@ -305,9 +381,13 @@ export async function getSkills(req: Request, res: Response, next: NextFunction)
   } catch (error) {
     next(error);
   }
-}
+};
 
-export async function updateSkills(req: Request, res: Response, next: NextFunction): Promise<void> {
+export const updateSkills = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const userId = getAuthUserId(req);
     if (!userId) {
@@ -316,10 +396,18 @@ export async function updateSkills(req: Request, res: Response, next: NextFuncti
     }
 
     const { skills } = req.body as { skills?: unknown };
-    if (!Array.isArray(skills)) {
-      res.status(400).json({ message: 'Skills must be an array' });
+
+    if (
+      !Array.isArray(skills) ||
+      !skills.every((skill) => isString(skill) && skill.trim())
+    ) {
+      res.status(400).json({ message: 'Skills must be an array of strings' });
       return;
     }
+
+    const normalizedSkills = skills
+      .map((skill) => (skill as string).trim())
+      .filter(Boolean);
 
     const user = await User.findByPk(userId);
     if (!user) {
@@ -327,9 +415,10 @@ export async function updateSkills(req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    await user.update({ skills });
-    res.json({ skills });
+    await user.update({ skills: normalizedSkills });
+
+    res.json({ skills: normalizedSkills });
   } catch (error) {
     next(error);
   }
-}
+};
