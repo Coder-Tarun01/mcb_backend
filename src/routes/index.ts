@@ -18,6 +18,7 @@ import resumeSections from './resumeSections';
 import resumeUpload from './resumeUpload';
 import upload from './upload';
 import email from './email';
+import suggest from './suggest';
 
 const router = Router();
 router.use('/auth', auth);
@@ -38,6 +39,7 @@ router.use('/resume-sections', resumeSections);
 router.use('/resume', resumeUpload);
 router.use('/upload', upload);
 router.use('/email', email);
+router.use('/suggest', suggest);
 
 router.get('/send-fresher-mails', async (_req, res, next) => {
   try {

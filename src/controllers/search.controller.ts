@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { Op } from 'sequelize';
-import { Job, Company, User } from '../models';
+import { Job, Company, User, AiJob } from '../models';
 import { AuthRequest } from '../middleware/auth';
 
 export async function searchJobs(req: Request, res: Response, next: NextFunction) {
@@ -8,6 +8,7 @@ export async function searchJobs(req: Request, res: Response, next: NextFunction
     const { q, location, type, category, minSalary, maxSalary, isRemote } = req.query;
     
     const where: any = {};
+    const aiWhere: any = {};
     
     if (q) {
       where[Op.or] = [
@@ -15,14 +16,23 @@ export async function searchJobs(req: Request, res: Response, next: NextFunction
         { description: { [Op.like]: `%${q}%` } },
         { company: { [Op.like]: `%${q}%` } }
       ];
+      aiWhere[Op.or] = [
+        { title: { [Op.iLike]: `%${q}%` } },
+        { description: { [Op.iLike]: `%${q}%` } },
+        { company: { [Op.iLike]: `%${q}%` } },
+        { skills: { [Op.iLike]: `%${q}%` } },
+        { job_type: { [Op.iLike]: `%${q}%` } },
+      ];
     }
     
     if (location) {
       where.location = { [Op.like]: `%${location}%` };
+      aiWhere.location = { [Op.iLike]: `%${location}%` };
     }
     
     if (type) {
       where.type = type;
+      aiWhere.job_type = { [Op.iLike]: `%${type}%` };
     }
     
     if (category) {
@@ -48,12 +58,32 @@ export async function searchJobs(req: Request, res: Response, next: NextFunction
       order: [['createdAt', 'DESC']],
     });
 
+    const aiJobs = await AiJob.findAll({
+      where: aiWhere,
+      attributes: [
+        'id',
+        'title',
+        'company',
+        'location',
+        'description',
+        'skills',
+        'experience',
+        'job_url',
+        'posted_date',
+        'job_type',
+      ],
+      order: [['posted_date', 'DESC']],
+    });
+
+    const now = Date.now();
+
     // Transform the data to include legacy fields for frontend compatibility
     const transformedJobs = jobs.map(job => {
       const jobData = job.toJSON() as any;
       
       return {
         ...jobData,
+        source: 'internal' as const,
         // Add legacy fields for backward compatibility
         salary: (jobData.minSalary || jobData.maxSalary) ? {
           min: jobData.minSalary || null,
@@ -75,7 +105,80 @@ export async function searchJobs(req: Request, res: Response, next: NextFunction
       };
     });
 
-    res.json(transformedJobs);
+    const transformedAiJobs = aiJobs.map(job => {
+      const jobData = job.toJSON() as {
+        id: number;
+        title?: string | null;
+        company?: string | null;
+        location?: string | null;
+        description?: string | null;
+        skills?: string | string[] | null;
+        experience?: string | null;
+        job_url?: string | null;
+        posted_date?: string | Date | null;
+        job_type?: string | null;
+      };
+
+      const skillsArray = (() => {
+        if (!jobData.skills) return [];
+        if (Array.isArray(jobData.skills)) {
+          return jobData.skills.map((skill) => String(skill).trim()).filter(Boolean);
+        }
+        const trimmed = jobData.skills.trim();
+        if (!trimmed) return [];
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            return parsed.map((skill) => String(skill).trim()).filter(Boolean);
+          }
+        } catch {
+          // fall through
+        }
+        return trimmed.split(/[,|;/]/).map((skill) => skill.trim()).filter(Boolean);
+      })();
+
+      const postedDate = jobData.posted_date ? new Date(jobData.posted_date) : null;
+
+      return {
+        id: `ai-${jobData.id}`,
+        title: jobData.title || '',
+        company: jobData.company || 'External company',
+        companyId: null,
+        location: jobData.location || null,
+        type: jobData.job_type || null,
+        category: null,
+        isRemote: jobData.location ? jobData.location.toLowerCase().includes('remote') : null,
+        locationType: null,
+        description: jobData.description || null,
+        jobDescription: jobData.description || null,
+        experienceLevel: jobData.experience || undefined,
+        experience: null,
+        skills: skillsArray,
+        requirements: [],
+        postedDate: postedDate ? postedDate.toISOString() : null,
+        applicationDeadline: null,
+        jobUrl: jobData.job_url || null,
+        rating: 4.3,
+        applicantsCount: 0,
+        isBookmarked: false,
+        isNew: postedDate ? postedDate.getTime() > now - 7 * 24 * 60 * 60 * 1000 : false,
+        createdAt: postedDate ? postedDate.toISOString() : null,
+        updatedAt: postedDate ? postedDate.toISOString() : null,
+        jobType: jobData.job_type || undefined,
+        salary: null,
+        source: 'external' as const,
+      };
+    });
+
+    const combinedJobs = [...transformedJobs, ...transformedAiJobs].sort((a, b) => {
+      const dateA = a.postedDate || a.createdAt || null;
+      const dateB = b.postedDate || b.createdAt || null;
+      const timeA = dateA ? new Date(dateA).getTime() : 0;
+      const timeB = dateB ? new Date(dateB).getTime() : 0;
+      return timeB - timeA;
+    });
+
+    res.json(combinedJobs);
   } catch (e) { next(e); }
 }
 
@@ -135,128 +238,5 @@ export async function getRecommendedJobs(req: Request, res: Response, next: Next
     });
 
     res.json(jobs);
-  } catch (e) { next(e); }
-}
-
-// Autocomplete for job titles
-export async function autocompleteJobTitles(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { q } = req.query;
-    const limit = parseInt(req.query.limit as string) || 10;
-
-    if (!q || (q as string).length < 2) {
-      return res.json([]);
-    }
-
-    const jobs = await Job.findAll({
-      where: {
-        title: { [Op.like]: `%${q}%` }
-      },
-      attributes: ['title'],
-      group: ['title'],
-      limit,
-      raw: true
-    });
-
-    res.json(jobs.map(j => j.title));
-  } catch (e) { next(e); }
-}
-
-// Autocomplete for company names
-export async function autocompleteCompanies(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { q } = req.query;
-    const limit = parseInt(req.query.limit as string) || 10;
-
-    if (!q || (q as string).length < 2) {
-      return res.json([]);
-    }
-
-    const jobs = await Job.findAll({
-      where: {
-        company: { [Op.like]: `%${q}%` }
-      },
-      attributes: ['company'],
-      group: ['company'],
-      limit,
-      raw: true
-    });
-
-    res.json(jobs.map(j => j.company));
-  } catch (e) { next(e); }
-}
-
-// Autocomplete for locations
-export async function autocompleteLocations(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { q } = req.query;
-    const limit = parseInt(req.query.limit as string) || 10;
-
-    if (!q || (q as string).length < 2) {
-      return res.json([]);
-    }
-
-    const jobs = await Job.findAll({
-      where: {
-        location: { [Op.like]: `%${q}%` }
-      },
-      attributes: ['location'],
-      group: ['location'],
-      limit,
-      raw: true
-    });
-
-    res.json(jobs.map(j => j.location).filter(Boolean));
-  } catch (e) { next(e); }
-}
-
-// Combined autocomplete - returns jobs, companies, and locations
-export async function autocompleteSearch(req: Request, res: Response, next: NextFunction) {
-  try {
-    const { q } = req.query;
-    const limit = parseInt(req.query.limit as string) || 5;
-
-    if (!q || (q as string).length < 2) {
-      return res.json({
-        jobs: [],
-        companies: [],
-        locations: []
-      });
-    }
-
-    const [jobs, companies, locations] = await Promise.all([
-      Job.findAll({
-        where: {
-          title: { [Op.like]: `%${q}%` }
-        },
-        attributes: ['id', 'title', 'company', 'location', 'type'],
-        limit,
-        order: [['createdAt', 'DESC']]
-      }),
-      Job.findAll({
-        where: {
-          company: { [Op.like]: `%${q}%` }
-        },
-        attributes: ['company'],
-        group: ['company'],
-        limit,
-        raw: true
-      }),
-      Job.findAll({
-        where: {
-          location: { [Op.like]: `%${q}%` }
-        },
-        attributes: ['location'],
-        group: ['location'],
-        limit,
-        raw: true
-      })
-    ]);
-
-    res.json({
-      jobs,
-      companies: companies.map(c => c.company).filter(Boolean),
-      locations: locations.map(l => l.location).filter(Boolean)
-    });
   } catch (e) { next(e); }
 }
