@@ -12,9 +12,13 @@ async function start() {
     // Test database connection
     await testConnection();
     
-    // Disable foreign key checks temporarily to avoid constraint issues
-    console.log('🔧 Temporarily disabling foreign key checks...');
-    await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+    const currentDialect = sequelize.getDialect();
+
+    // Disable referential integrity checks for MySQL only
+    if (currentDialect === 'mysql') {
+      console.log('🔧 Temporarily disabling foreign key checks...');
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+    }
     
     // Sync database schema with safe options
     try {
@@ -25,9 +29,11 @@ async function start() {
       console.log('Sync error:', (syncError as Error).message);
     }
     
-    // Re-enable foreign key checks
-    console.log('🔧 Re-enabling foreign key checks...');
-    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+    // Re-enable referential integrity checks for MySQL only
+    if (currentDialect === 'mysql') {
+      console.log('🔧 Re-enabling foreign key checks...');
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+    }
     
     // Skip seed data loading - using real database jobs only
     // if (process.env.NODE_ENV !== 'production') {
@@ -43,7 +49,11 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`🚀 API server listening on port ${PORT}`);
       console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🗄️  Database: MySQL`);
+      const readableDialect =
+        currentDialect === 'postgres'
+          ? 'PostgreSQL'
+          : currentDialect.toUpperCase();
+      console.log(`🗄️  Database: ${readableDialect}`);
 
       try {
         const notificationModulePath = path.resolve(__dirname, '../notifications/email');

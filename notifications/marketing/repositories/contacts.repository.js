@@ -18,6 +18,7 @@ function createContactsRepository({ sequelize = getSequelize(), maxContacts = 20
           mobile_no,
           branch,
           experience,
+          telegram_chat_id,
           created_at
         FROM marketing_contacts
         ORDER BY created_at DESC
@@ -49,6 +50,7 @@ function createContactsRepository({ sequelize = getSequelize(), maxContacts = 20
           mobileNo: row.mobile_no || null,
           branch: row.branch || null,
           experience: row.experience || null,
+          telegramChatId: row.telegram_chat_id || null,
           createdAt: row.created_at ? new Date(row.created_at) : null,
         });
       }

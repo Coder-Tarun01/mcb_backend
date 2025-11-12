@@ -6,6 +6,7 @@ const { createContactsRepository } = require('./repositories/contacts.repository
 const { createDigestLogRepository } = require('./repositories/digestLogs.repository');
 const { createEmailService } = require('./services/email.service');
 const { createSchedulerService } = require('./services/scheduler.service');
+const { createTelegramService } = require('./services/telegram.service');
 const { createTriggerController } = require('./services/trigger.controller');
 
 class MarketingNotificationOrchestrator {
@@ -14,6 +15,7 @@ class MarketingNotificationOrchestrator {
     jobsRepository = null,
     contactsRepository = null,
     emailService = null,
+    telegramService = null,
     schedulerService = null,
     logger = marketingLogger,
   } = {}) {
@@ -22,6 +24,7 @@ class MarketingNotificationOrchestrator {
     this.contactsRepository = contactsRepository || createContactsRepository({ maxContacts: config.contactFetchLimit });
     this.digestLogRepository = createDigestLogRepository();
     this.emailService = emailService || createEmailService({ config, digestLogRepository: this.digestLogRepository });
+    this.telegramService = telegramService || createTelegramService({ config });
     this.logger = logger;
     this.schedulerService =
       schedulerService ||
@@ -136,12 +139,68 @@ class MarketingNotificationOrchestrator {
         batchId,
       });
 
-      summary.contactsSucceeded = emailResult.succeeded;
-      summary.contactsFailed = emailResult.failed;
-      summary.errors.push(...emailResult.failures.map((failure) => ({ stage: 'email', contact: failure.contact, message: failure.error })));
+      const telegramResult =
+        this.telegramService && typeof this.telegramService.sendDigestTelegrams === 'function'
+          ? await this.telegramService.sendDigestTelegrams({
+              contacts: segmentation.contactsToSend,
+              jobsByContact: segmentation.contactJobsMap,
+              batchId,
+            })
+          : {
+              attempted: 0,
+              succeeded: 0,
+              failed: 0,
+              failures: [],
+              successes: [],
+              skipped: segmentation.contactsToSend.length,
+              reason: 'Telegram service not configured',
+            };
 
-      if (emailResult.succeeded > 0) {
-        const jobIdsBySource = aggregateJobsBySource(emailResult.successes, segmentation.contactJobsMap);
+      const successfulContactIds = new Set();
+      const trackSuccess = (result) => {
+        if (!result) {
+          return;
+        }
+        if (result.contactId !== undefined && result.contactId !== null) {
+          successfulContactIds.add(result.contactId);
+        } else if (result.contact) {
+          successfulContactIds.add(result.contact);
+        }
+      };
+
+      emailResult.successes.forEach(trackSuccess);
+      telegramResult.successes.forEach(trackSuccess);
+
+      summary.contactsSucceeded = successfulContactIds.size;
+      summary.contactsFailed = Math.max(0, summary.contactsAttempted - summary.contactsSucceeded);
+      const formatFailure = (failure, stage) => ({
+        stage,
+        contact: failure?.contact ?? null,
+        message: failure?.error || 'Unknown error',
+      });
+      summary.errors.push(
+        ...emailResult.failures.map((failure) => formatFailure(failure, 'email')),
+        ...telegramResult.failures.map((failure) => formatFailure(failure, 'telegram'))
+      );
+
+      summary.channels = {
+        email: {
+          attempted: emailResult.attempted,
+          succeeded: emailResult.succeeded,
+          failed: emailResult.failed,
+        },
+        telegram: {
+          attempted: telegramResult.attempted,
+          succeeded: telegramResult.succeeded,
+          failed: telegramResult.failed,
+          skipped: telegramResult.skipped ?? 0,
+          reason: telegramResult.reason || null,
+        },
+      };
+
+      const combinedSuccesses = [...emailResult.successes, ...telegramResult.successes];
+      if (combinedSuccesses.length > 0) {
+        const jobIdsBySource = aggregateJobsBySource(combinedSuccesses, segmentation.contactJobsMap);
         if ((jobIdsBySource.jobs && jobIdsBySource.jobs.length > 0) || (jobIdsBySource.aijobs && jobIdsBySource.aijobs.length > 0)) {
           await this.jobsRepository.markJobsNotified(jobIdsBySource);
           summary.jobsMarkedNotified = jobIdsBySource;
@@ -152,7 +211,7 @@ class MarketingNotificationOrchestrator {
         summary.jobsMarkedNotified = {};
       }
 
-      summary.ok = emailResult.failed === 0;
+      summary.ok = summary.contactsFailed === 0;
 
       await this.evaluateAlerts({ summary });
 

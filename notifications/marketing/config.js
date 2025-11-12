@@ -91,6 +91,25 @@ function buildConfig() {
   const concurrency = Math.max(1, toNumber(process.env.MARKETING_EMAIL_CONCURRENCY, 5));
   const contactFetchLimit = Math.max(1, toNumber(process.env.MARKETING_CONTACTS_FETCH_LIMIT, 200));
 
+  const telegramRetryDefaults = [2_000, 5_000, 10_000];
+  const telegramRetryRaw = process.env.MARKETING_TELEGRAM_RETRY_BACKOFF_MS;
+  const telegramRetryBackoffs = toStringArray(telegramRetryRaw, telegramRetryDefaults)
+    .map((value, index) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : telegramRetryDefaults[Math.min(index, telegramRetryDefaults.length - 1)];
+    })
+    .slice(0, 3);
+  const telegramBatchSize = Math.max(1, toNumber(process.env.MARKETING_TELEGRAM_BATCH_SIZE, batchSize));
+  const telegramConcurrency = Math.max(1, toNumber(process.env.MARKETING_TELEGRAM_CONCURRENCY, concurrency));
+  const telegramMaxRetries = Math.max(0, toNumber(process.env.MARKETING_TELEGRAM_MAX_RETRIES, telegramRetryBackoffs.length));
+  const telegramBatchPause = Math.max(0, toNumber(process.env.MARKETING_TELEGRAM_BATCH_PAUSE_MS, 2_000));
+  const telegramTimeoutMs = Math.max(0, toNumber(process.env.MARKETING_TELEGRAM_TIMEOUT_MS, 20_000));
+  const telegramDisablePreview = toBoolean(process.env.MARKETING_TELEGRAM_DISABLE_LINK_PREVIEW, true);
+  const telegramEnabled = toBoolean(process.env.MARKETING_TELEGRAM_ENABLED, false);
+  const telegramDryRun = toBoolean(process.env.MARKETING_TELEGRAM_DRY_RUN, false);
+  const telegramBotToken = process.env.MARKETING_TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || null;
+  const telegramApiBase = process.env.MARKETING_TELEGRAM_API_BASE || 'https://api.telegram.org';
+
   return {
     enabled: toBoolean(process.env.MARKETING_EMAIL_ENABLED, true),
     cronExpression: process.env.MARKETING_EMAIL_CRON || '*/30 * * * *',
@@ -135,6 +154,19 @@ function buildConfig() {
     },
     telemetry: {
       enabled: toBoolean(process.env.MARKETING_TELEMETRY_ENABLED, false),
+    },
+    telegram: {
+      enabled: telegramEnabled,
+      dryRun: telegramDryRun,
+      botToken: telegramBotToken,
+      apiBaseUrl: telegramApiBase.replace(/\/+$/, ''),
+      batchSize: telegramBatchSize,
+      batchPauseMs: telegramBatchPause,
+      concurrency: telegramConcurrency,
+      maxRetries: telegramMaxRetries,
+      retryBackoffs: telegramRetryBackoffs,
+      timeoutMs: telegramTimeoutMs,
+      disableLinkPreview: telegramDisablePreview,
     },
   };
 }

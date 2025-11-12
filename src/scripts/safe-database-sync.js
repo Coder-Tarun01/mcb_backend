@@ -14,9 +14,13 @@ async function safeDatabaseSync() {
     await sequelize.authenticate();
     console.log('✅ Database connection established');
 
-    // Disable foreign key checks temporarily
-    console.log('🔧 Disabling foreign key checks...');
-    await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+    const currentDialect = sequelize.getDialect();
+
+    if (currentDialect === 'mysql') {
+      // Disable foreign key checks temporarily
+      console.log('🔧 Disabling foreign key checks...');
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+    }
 
     // Sync models with safe options
     console.log('🔄 Syncing database models...');
@@ -26,15 +30,24 @@ async function safeDatabaseSync() {
       logging: console.log 
     });
 
-    // Re-enable foreign key checks
-    console.log('🔧 Re-enabling foreign key checks...');
-    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+    if (currentDialect === 'mysql') {
+      // Re-enable foreign key checks
+      console.log('🔧 Re-enabling foreign key checks...');
+      await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+    }
 
     console.log('✅ Database sync completed successfully');
 
     // Verify tables exist
-    const [tables] = await sequelize.query('SHOW TABLES');
-    console.log('📋 Available tables:', tables.map(t => Object.values(t)[0]));
+    if (currentDialect === 'mysql') {
+      const [tables] = await sequelize.query('SHOW TABLES');
+      console.log('📋 Available tables:', tables.map(t => Object.values(t)[0]));
+    } else if (currentDialect === 'postgres') {
+      const [tables] = await sequelize.query(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()`
+      );
+      console.log('📋 Available tables:', tables.map(t => t.table_name));
+    }
 
     console.log('\n🎉 Safe database sync completed!');
 

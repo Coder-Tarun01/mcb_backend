@@ -45,6 +45,7 @@ interface CsvUserRow {
   mobile?: string;
   branch?: string;
   experience?: string;
+  telegramChatId?: string | null;
 }
 
 interface UploadSummary {
@@ -68,6 +69,7 @@ interface MarketingContactPayload {
   mobileNo: string | null;
   branch: string | null;
   experience: string | null;
+  telegramChatId: string | null;
 }
 
 interface MarketingContactResponse {
@@ -77,6 +79,7 @@ interface MarketingContactResponse {
   mobileNo: string | null;
   branch: string | null;
   experience: string | null;
+  telegramChatId: string | null;
   createdAt: string;
 }
 
@@ -145,12 +148,21 @@ function normalizeCsvRow(row: Record<string, unknown>, index: number): CsvUserRo
     normalizedEntries['exp'] ||
     '';
 
+  const telegramChatIdValue =
+    normalizedEntries.telegram ||
+    normalizedEntries['telegram chat id'] ||
+    normalizedEntries['telegram_chat_id'] ||
+    normalizedEntries['telegram id'] ||
+    normalizedEntries['telegram_chatid'] ||
+    '';
+
   return {
     name: nameValue.trim(),
     email: emailValue.trim(),
     mobile: mobileValue.trim(),
     branch: branchValue.trim(),
     experience: experienceValue.trim(),
+    telegramChatId: telegramChatIdValue.trim(),
   };
 }
 
@@ -373,10 +385,11 @@ router.post(
           const mobile = row.mobile?.trim() || null;
           const branch = row.branch?.trim() || null;
           const experience = row.experience?.trim() || null;
+          const telegramChatId = row.telegramChatId?.trim() || null;
 
           try {
             const existingContactRows = await sequelize.query(
-              `SELECT id, full_name, mobile_no, branch, experience
+              `SELECT id, full_name, mobile_no, branch, experience, telegram_chat_id
                FROM marketing_contacts
                WHERE email = :email
                LIMIT 1`,
@@ -394,13 +407,15 @@ router.post(
                 mobile_no?: string | null;
                 branch?: string | null;
                 experience?: string | null;
+                telegram_chat_id?: string | null;
               };
 
               const shouldUpdate =
                 (existingContact.full_name || '') !== name ||
                 (existingContact.mobile_no || '') !== (mobile || '') ||
                 (existingContact.branch || '') !== (branch || '') ||
-                (existingContact.experience || '') !== (experience || '');
+                (existingContact.experience || '') !== (experience || '') ||
+                (existingContact.telegram_chat_id || '') !== (telegramChatId || '');
 
               if (shouldUpdate) {
                 await sequelize.query(
@@ -408,7 +423,8 @@ router.post(
                    SET full_name = :fullName,
                        mobile_no = :mobileNo,
                        branch = :branch,
-                       experience = :experience
+                       experience = :experience,
+                       telegram_chat_id = :telegramChatId
                    WHERE id = :id`,
                   {
                     replacements: {
@@ -417,6 +433,7 @@ router.post(
                       mobileNo: mobile,
                       branch,
                       experience,
+                      telegramChatId,
                     },
                     type: QueryTypes.UPDATE,
                     transaction,
@@ -430,8 +447,8 @@ router.post(
             }
 
             await sequelize.query(
-              `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, created_at)
-               VALUES (:fullName, :email, :mobileNo, :branch, :experience, NOW())`,
+              `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at)
+               VALUES (:fullName, :email, :mobileNo, :branch, :experience, :telegramChatId, NOW())`,
               {
                 replacements: {
                   fullName: name,
@@ -439,6 +456,7 @@ router.post(
                   mobileNo: mobile,
                   branch,
                   experience,
+                  telegramChatId,
                 },
                 type: QueryTypes.INSERT,
                 transaction,
@@ -573,7 +591,7 @@ router.get('/marketing/contacts', requireAdminKey, async (req: Request, res: Res
     }
 
     const contactRowsPromise = sequelize.query(
-      `SELECT id, full_name, email, mobile_no, branch, experience, created_at
+      `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
        FROM marketing_contacts
        ${whereClause}
        ORDER BY ${sortColumn} ${sortDirection}
@@ -643,11 +661,11 @@ router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Re
       return;
     }
 
-    const { fullName, email, mobileNo, branch, experience } = payload;
+    const { fullName, email, mobileNo, branch, experience, telegramChatId } = payload;
 
     const [insertResult] = await sequelize.query(
-      `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, created_at)
-       VALUES (:fullName, :email, :mobileNo, :branch, :experience, NOW())`,
+      `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at)
+       VALUES (:fullName, :email, :mobileNo, :branch, :experience, :telegramChatId, NOW())`,
       {
         replacements: {
           fullName,
@@ -655,6 +673,7 @@ router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Re
           mobileNo,
           branch,
           experience,
+          telegramChatId,
         },
         type: QueryTypes.INSERT,
       }
@@ -665,7 +684,7 @@ router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Re
 
     if (!contact) {
       const fallbackRows = await sequelize.query(
-        `SELECT id, full_name, email, mobile_no, branch, experience, created_at
+        `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
          FROM marketing_contacts
          WHERE email = :email
          ORDER BY id DESC
@@ -740,7 +759,8 @@ router.put('/marketing/contacts/:id', requireAdminKey, async (req: Request, res:
            email = :email,
            mobile_no = :mobileNo,
            branch = :branch,
-           experience = :experience
+           experience = :experience,
+           telegram_chat_id = :telegramChatId
        WHERE id = :id`,
       {
         replacements: {
@@ -749,6 +769,7 @@ router.put('/marketing/contacts/:id', requireAdminKey, async (req: Request, res:
           mobileNo: payload.mobileNo,
           branch: payload.branch,
           experience: payload.experience,
+          telegramChatId: payload.telegramChatId,
           id,
         },
         type: QueryTypes.UPDATE,
@@ -844,6 +865,7 @@ router.get('/subscribers', requireAdminKey, async (req: Request, res: Response) 
          s.mobile_no,
          s.branch,
          s.experience,
+         s.telegram_chat_id,
          s.created_at
        FROM marketing_contacts s
        ${whereClause}
@@ -903,6 +925,12 @@ function normalizeMarketingContactPayload(body: any): MarketingContactPayload {
   const mobileNoRaw = typeof body?.mobileNo === 'string' ? body.mobileNo.trim() : '';
   const branchRaw = typeof body?.branch === 'string' ? body.branch.trim() : '';
   const experienceRaw = typeof body?.experience === 'string' ? body.experience.trim() : '';
+  const telegramChatIdRawCandidate =
+    typeof body?.telegramChatId === 'string'
+      ? body.telegramChatId.trim()
+      : typeof body?.telegram_chat_id === 'string'
+      ? body.telegram_chat_id.trim()
+      : '';
 
   return {
     fullName,
@@ -910,6 +938,7 @@ function normalizeMarketingContactPayload(body: any): MarketingContactPayload {
     mobileNo: mobileNoRaw.length > 0 ? mobileNoRaw : null,
     branch: branchRaw.length > 0 ? branchRaw : null,
     experience: experienceRaw.length > 0 ? experienceRaw : null,
+    telegramChatId: telegramChatIdRawCandidate.length > 0 ? telegramChatIdRawCandidate : null,
   };
 }
 
@@ -921,6 +950,7 @@ function mapMarketingContactRow(row: any): MarketingContactResponse {
     mobileNo: row.mobile_no ?? null,
     branch: row.branch ?? null,
     experience: row.experience ?? null,
+     telegramChatId: row.telegram_chat_id ?? null,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
   };
 }
@@ -931,7 +961,7 @@ async function loadMarketingContactById(id: number | null | undefined): Promise<
   }
 
   const rows = await sequelize.query(
-    `SELECT id, full_name, email, mobile_no, branch, experience, created_at
+    `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
      FROM marketing_contacts
      WHERE id = :id
      LIMIT 1`,
@@ -956,6 +986,7 @@ function mapSubscriberRow(row: any) {
     mobileNo: row.mobile_no ?? null,
     branch: row.branch ?? null,
     experience: row.experience ?? null,
+    telegramChatId: row.telegram_chat_id ?? null,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     updatedAt: null,
   };
