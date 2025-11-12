@@ -1,0 +1,58 @@
+/**
+ * Safe database sync script
+ * This script safely syncs the database without constraint issues
+ */
+
+const { sequelize } = require('../models');
+
+async function safeDatabaseSync() {
+  console.log('🔄 Safe Database Sync');
+  console.log('===================');
+
+  try {
+    // Test connection
+    await sequelize.authenticate();
+    console.log('✅ Database connection established');
+
+    // Disable foreign key checks temporarily
+    console.log('🔧 Disabling foreign key checks...');
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+
+    // Sync models with safe options
+    console.log('🔄 Syncing database models...');
+    await sequelize.sync({ 
+      force: false, 
+      alter: false,
+      logging: console.log 
+    });
+
+    // Re-enable foreign key checks
+    console.log('🔧 Re-enabling foreign key checks...');
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+
+    console.log('✅ Database sync completed successfully');
+
+    // Verify tables exist
+    const [tables] = await sequelize.query('SHOW TABLES');
+    console.log('📋 Available tables:', tables.map(t => Object.values(t)[0]));
+
+    console.log('\n🎉 Safe database sync completed!');
+
+  } catch (error) {
+    console.error('❌ Error during safe database sync:', error);
+    throw error;
+  } finally {
+    await sequelize.close();
+  }
+}
+
+// Run the safe sync
+safeDatabaseSync()
+  .then(() => {
+    console.log('\n✅ Safe database sync completed successfully');
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error('\n❌ Safe database sync failed:', error);
+    process.exit(1);
+  });

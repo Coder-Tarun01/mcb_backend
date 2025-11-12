@@ -1,0 +1,32 @@
+[
+  {
+    "id": "saved-job-1",
+    "userId": "1",
+    "jobId": "1",
+    "savedAt": "2025-10-10T10:00:00.000Z"
+  },
+  {
+    "id": "saved-job-2", 
+    "userId": "1",
+    "jobId": "2",
+    "savedAt": "2025-10-09T15:30:00.000Z"
+  },
+  {
+    "id": "saved-job-3",
+    "userId": "1", 
+    "jobId": "3",
+    "savedAt": "2025-10-08T09:15:00.000Z"
+  },
+  {
+    "id": "saved-job-4",
+    "userId": "2",
+    "jobId": "1", 
+    "savedAt": "2025-10-07T14:20:00.000Z"
+  },
+  {
+    "id": "saved-job-5",
+    "userId": "2",
+    "jobId": "4",
+    "savedAt": "2025-10-06T11:45:00.000Z"
+  }
+]
