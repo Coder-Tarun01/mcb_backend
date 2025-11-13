@@ -5,18 +5,21 @@ let notificationColumnsPromise = null;
 let jobColumnInfoPromise = null;
 let aiJobColumnInfoPromise = null;
 
-function quoteIdentifier(identifier) {
-  if (!identifier) {
-    return '';
-  }
-  return `\`${String(identifier).replace(/`/g, '``')}\``;
-}
+function createQuoteHelpers(sequelize) {
+  const dialect = sequelize.getDialect();
+  const quoteIdentifier =
+    dialect === 'mysql'
+      ? (identifier) => (identifier ? `\`${String(identifier).replace(/`/g, '``')}\`` : '')
+      : (identifier) => (identifier ? `"${String(identifier).replace(/"/g, '""')}"` : '');
 
-function qualifyColumn(table, column) {
-  if (!table || !column) {
-    return '';
-  }
-  return `${quoteIdentifier(table)}.${quoteIdentifier(column)}`;
+  const qualifyColumn = (table, column) => {
+    if (!table || !column) {
+      return '';
+    }
+    return `${quoteIdentifier(table)}.${quoteIdentifier(column)}`;
+  };
+
+  return { quoteIdentifier, qualifyColumn };
 }
 
 function buildColumnFinder(columns) {
@@ -53,8 +56,34 @@ async function resolveJobColumnInfo(sequelize) {
     return jobColumnInfoPromise;
   }
 
+  const dialect = sequelize.getDialect();
+  const schema = process.env.DB_SCHEMA || undefined;
+
   const buildColumnInfo = async () => {
     try {
+      if (dialect === 'postgres') {
+        const describe = await sequelize
+          .getQueryInterface()
+          .describeTable({ tableName: 'jobs', schema });
+        const columns = Object.keys(describe || {}).map((name) => ({
+          raw: name,
+          lower: name.toLowerCase(),
+        }));
+        const findColumn = buildColumnFinder(columns);
+        return {
+          createdColumn: findColumn('createdAt', 'created_at'),
+          jobTypeColumn: findColumn('type', 'job_type'),
+          experienceColumn: findColumn('experienceLevel', 'experience'),
+          applyUrlColumn: findColumn('applyUrl', 'link'),
+          locationTypeColumn: findColumn('locationType', 'location_type'),
+          isRemoteColumn: findColumn('isRemote', 'is_remote'),
+          notifySentColumn: findColumn('notify_sent', 'notifysent'),
+          notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
+          categoryColumn: findColumn('category', 'job_category'),
+          skillsColumn: findColumn('skillsRequired', 'skills'),
+        };
+      }
+
       const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
         type: QueryTypes.SELECT,
       });
@@ -67,14 +96,14 @@ async function resolveJobColumnInfo(sequelize) {
         applyUrlColumn: findColumn('applyUrl', 'link'),
         locationTypeColumn: findColumn('locationType', 'location_type'),
         isRemoteColumn: findColumn('isRemote', 'is_remote'),
-        notifySentColumn: findColumn('notify_sent'),
-        notifySentAtColumn: findColumn('notify_sent_at'),
+        notifySentColumn: findColumn('notify_sent', 'notifysent'),
+        notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
         categoryColumn: findColumn('category', 'job_category'),
         skillsColumn: findColumn('skillsRequired', 'skills'),
       };
     } catch (error) {
       return {
-        createdColumn: 'created_at',
+        createdColumn: 'createdAt',
         jobTypeColumn: 'type',
         experienceColumn: 'experienceLevel',
         applyUrlColumn: 'applyUrl',
@@ -89,7 +118,7 @@ async function resolveJobColumnInfo(sequelize) {
   };
 
   jobColumnInfoPromise = buildSafeColumnInfo(buildColumnInfo, {
-    createdColumn: 'created_at',
+    createdColumn: 'createdAt',
     jobTypeColumn: 'type',
     experienceColumn: 'experienceLevel',
     applyUrlColumn: 'applyUrl',
@@ -109,8 +138,35 @@ async function resolveAiJobColumnInfo(sequelize) {
     return aiJobColumnInfoPromise;
   }
 
+  const dialect = sequelize.getDialect();
+  const schema = process.env.DB_SCHEMA || undefined;
+
   const buildColumnInfo = async () => {
     try {
+      if (dialect === 'postgres') {
+        const describe = await sequelize
+          .getQueryInterface()
+          .describeTable({ tableName: 'aijobs', schema });
+        const columns = Object.keys(describe || {}).map((name) => ({
+          raw: name,
+          lower: name.toLowerCase(),
+        }));
+        const findColumn = buildColumnFinder(columns);
+        return {
+          createdColumn: findColumn('created_at', 'createdAt'),
+          postedColumn: findColumn('posted_date', 'postedDate'),
+          jobTypeColumn: findColumn('job_type', 'jobType'),
+          remoteColumn: findColumn('remote', 'is_remote', 'isRemote'),
+          experienceColumn: findColumn('experience'),
+          applyUrlColumn: findColumn('job_url', 'applyUrl', 'link'),
+          locationTypeColumn: findColumn('location_type', 'job_type', 'type'),
+          notifySentColumn: findColumn('notify_sent', 'notifysent'),
+          notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
+          categoryColumn: findColumn('category', 'job_type'),
+          skillsColumn: findColumn('skills'),
+        };
+      }
+
       const columns = await sequelize.query('SHOW COLUMNS FROM aijobs', {
         type: QueryTypes.SELECT,
       });
@@ -124,14 +180,14 @@ async function resolveAiJobColumnInfo(sequelize) {
         experienceColumn: findColumn('experience'),
         applyUrlColumn: findColumn('job_url', 'applyUrl', 'link'),
         locationTypeColumn: findColumn('location_type', 'job_type', 'type'),
-        notifySentColumn: findColumn('notify_sent'),
-        notifySentAtColumn: findColumn('notify_sent_at'),
+        notifySentColumn: findColumn('notify_sent', 'notifysent'),
+        notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
         categoryColumn: findColumn('category', 'job_type'),
         skillsColumn: findColumn('skills'),
       };
     } catch (error) {
       return {
-        createdColumn: 'created_at',
+        createdColumn: null,
         postedColumn: 'posted_date',
         jobTypeColumn: 'job_type',
         remoteColumn: 'remote',
@@ -147,7 +203,7 @@ async function resolveAiJobColumnInfo(sequelize) {
   };
 
   aiJobColumnInfoPromise = buildSafeColumnInfo(buildColumnInfo, {
-    createdColumn: 'created_at',
+    createdColumn: null,
     postedColumn: 'posted_date',
     jobTypeColumn: 'job_type',
     remoteColumn: 'remote',
@@ -165,6 +221,12 @@ async function resolveAiJobColumnInfo(sequelize) {
 
 async function ensureNotificationColumns(sequelize) {
   if (notificationColumnsPromise) {
+    return notificationColumnsPromise;
+  }
+
+  const dialect = sequelize.getDialect();
+  if (dialect !== 'mysql') {
+    notificationColumnsPromise = Promise.resolve();
     return notificationColumnsPromise;
   }
 
@@ -194,17 +256,19 @@ async function ensureNotificationColumns(sequelize) {
 }
 
 function createJobsRepository({ sequelize = getSequelize() } = {}) {
+  const { quoteIdentifier, qualifyColumn } = createQuoteHelpers(sequelize);
   async function fetchPendingJobs({ limit, createdAfter }) {
     await ensureNotificationColumns(sequelize);
     const columns = await resolveJobColumnInfo(sequelize);
     const aiColumns = await resolveAiJobColumnInfo(sequelize);
 
-    const createdColumnName = columns.createdColumn || 'created_at';
+    const createdColumnName = columns.createdColumn || 'createdAt';
     const jobTypeColumnName = columns.jobTypeColumn || 'type';
     const isRemoteColumnName = columns.isRemoteColumn || 'isRemote';
     const locationTypeColumnName = columns.locationTypeColumn || 'locationType';
     const experienceColumnName = columns.experienceColumn || 'experienceLevel';
     const applyUrlColumnName = columns.applyUrlColumn || 'applyUrl';
+    const notifySentColumnName = columns.notifySentColumn || 'notify_sent';
     const categoryColumnName = columns.categoryColumn;
     const skillsColumnName = columns.skillsColumn;
 
@@ -214,39 +278,51 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const locationTypeExpr = qualifyColumn('jobs', locationTypeColumnName);
     const experienceExpr = `COALESCE(${qualifyColumn('jobs', experienceColumnName)}, '')`;
     const applyUrlExpr = `COALESCE(${qualifyColumn('jobs', applyUrlColumnName)}, '')`;
-    const categoryExpr = categoryColumnName ? qualifyColumn('jobs', categoryColumnName) : 'NULL';
+    const jobIdExpr = `${qualifyColumn('jobs', 'id')}::text`;
+    const categoryExpr = categoryColumnName ? `COALESCE(${qualifyColumn('jobs', categoryColumnName)}, '')` : "''";
     const skillsExpr = skillsColumnName ? qualifyColumn('jobs', skillsColumnName) : 'NULL';
+    const notifySentExpr = notifySentColumnName ? qualifyColumn('jobs', notifySentColumnName) : null;
 
     const aiCreatedColumns = [aiColumns.createdColumn, aiColumns.postedColumn]
       .filter(Boolean)
       .map((col) => qualifyColumn('aijobs', col));
     const aiCreatedExpr = aiCreatedColumns.length > 0 ? `COALESCE(${aiCreatedColumns.join(', ')})` : 'NULL';
-    const aiJobTypeExpr = aiColumns.jobTypeColumn ? qualifyColumn('aijobs', aiColumns.jobTypeColumn) : "''";
+    const aiJobTypeExpr = aiColumns.jobTypeColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.jobTypeColumn)}, '')` : "''";
     const aiRemoteExpr = aiColumns.remoteColumn ? qualifyColumn('aijobs', aiColumns.remoteColumn) : 'NULL';
-    const aiLocationTypeExpr = aiColumns.locationTypeColumn ? qualifyColumn('aijobs', aiColumns.locationTypeColumn) : "''";
-    const aiExperienceExpr = aiColumns.experienceColumn ? qualifyColumn('aijobs', aiColumns.experienceColumn) : "''";
-    const aiApplyUrlExpr = aiColumns.applyUrlColumn ? qualifyColumn('aijobs', aiColumns.applyUrlColumn) : "''";
-    const aiCategoryExpr = aiColumns.categoryColumn ? qualifyColumn('aijobs', aiColumns.categoryColumn) : "''";
+    const aiIdExpr = `${qualifyColumn('aijobs', 'id')}::text`;
+    const aiLocationTypeExpr = aiColumns.locationTypeColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.locationTypeColumn)}, '')` : "''";
+    const aiExperienceExpr = aiColumns.experienceColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.experienceColumn)}, '')` : "''";
+    const aiApplyUrlExpr = aiColumns.applyUrlColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.applyUrlColumn)}, '')` : "''";
+    const aiCategoryExpr = aiColumns.categoryColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.categoryColumn)}, '')` : "''";
     const aiSkillsExpr = aiColumns.skillsColumn ? qualifyColumn('aijobs', aiColumns.skillsColumn) : 'NULL';
     const aiNotifySentAtExpr = aiColumns.notifySentAtColumn ? qualifyColumn('aijobs', aiColumns.notifySentAtColumn) : 'NULL';
+    const aiNotifySentExpr = aiColumns.notifySentColumn ? qualifyColumn('aijobs', aiColumns.notifySentColumn) : null;
 
     const replacements = { limit };
     const hasCreatedAfter = createdAfter instanceof Date && !Number.isNaN(createdAfter.getTime());
 
-    let jobWhereClause = '';
+    const jobConditions = [];
+    if (notifySentExpr) {
+      jobConditions.push(`(${notifySentExpr} = false OR ${notifySentExpr} IS NULL)`);
+    }
     if (hasCreatedAfter && createdColumnQualified) {
       replacements.createdAfterJobs = createdAfter;
-      jobWhereClause = `WHERE ${createdColumnQualified} >= :createdAfterJobs`;
+      jobConditions.push(`${createdColumnQualified} >= :createdAfterJobs`);
     }
+    const jobWhereClause = jobConditions.length > 0 ? `WHERE ${jobConditions.join(' AND ')}` : '';
 
     const aiCreatedFilterColumn =
       aiColumns.createdColumn ? qualifyColumn('aijobs', aiColumns.createdColumn) : aiColumns.postedColumn ? qualifyColumn('aijobs', aiColumns.postedColumn) : null;
 
-    let aiWhereClause = '';
+    const aiConditions = [];
+    if (aiNotifySentExpr) {
+      aiConditions.push(`(${aiNotifySentExpr} = false OR ${aiNotifySentExpr} IS NULL)`);
+    }
     if (hasCreatedAfter && aiCreatedFilterColumn) {
       replacements.createdAfterAiJobs = createdAfter;
-      aiWhereClause = `WHERE ${aiCreatedFilterColumn} >= :createdAfterAiJobs`;
+      aiConditions.push(`${aiCreatedFilterColumn} >= :createdAfterAiJobs`);
     }
+    const aiWhereClause = aiConditions.length > 0 ? `WHERE ${aiConditions.join(' AND ')}` : '';
 
     const rows = await sequelize.query(
       `
@@ -254,7 +330,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
         FROM (
           SELECT
             'jobs' AS source,
-            jobs.id AS id,
+            ${jobIdExpr} AS id,
             jobs.title AS title,
             jobs.company AS company_name,
             jobs.location AS location,
@@ -275,7 +351,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
 
           SELECT
             'aijobs' AS source,
-            aijobs.id AS id,
+            ${aiIdExpr} AS id,
             aijobs.title AS title,
             aijobs.company AS company_name,
             aijobs.location AS location,
@@ -343,17 +419,33 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
           : `COALESCE(${aiDateColumns.join(', ')})`;
 
     const replacements = {};
-    let jobsWhere = '';
-    let aiWhere = '';
+    const jobConditions = [];
+    const aiConditions = [];
+
+    const notifySentColumnName = columns.notifySentColumn || 'notify_sent';
+    const aiNotifySentColumnName = aiColumns.notifySentColumn || 'notify_sent';
+
+    const notifySentColumn = notifySentColumnName ? qualifyColumn('jobs', notifySentColumnName) : null;
+    const aiNotifySentColumn = aiNotifySentColumnName ? qualifyColumn('aijobs', aiNotifySentColumnName) : null;
+
+    if (notifySentColumn) {
+      jobConditions.push(`(${notifySentColumn} = false OR ${notifySentColumn} IS NULL)`);
+    }
+    if (aiNotifySentColumn) {
+      aiConditions.push(`(${aiNotifySentColumn} = false OR ${aiNotifySentColumn} IS NULL)`);
+    }
 
     if (createdAfter instanceof Date && !Number.isNaN(createdAfter.getTime())) {
       replacements.createdAfterJobs = createdAfter;
-      jobsWhere = `WHERE ${jobCreatedColumn} >= :createdAfterJobs`;
+      jobConditions.push(`${jobCreatedColumn} >= :createdAfterJobs`);
       if (aiDateExpression) {
         replacements.createdAfterAiJobs = createdAfter;
-        aiWhere = `WHERE ${aiDateExpression} >= :createdAfterAiJobs`;
+        aiConditions.push(`${aiDateExpression} >= :createdAfterAiJobs`);
       }
     }
+
+    const jobsWhere = jobConditions.length > 0 ? `WHERE ${jobConditions.join(' AND ')}` : '';
+    const aiWhere = aiConditions.length > 0 ? `WHERE ${aiConditions.join(' AND ')}` : '';
 
     const [jobsCountRows, aiJobsCountRows] = await Promise.all([
       sequelize.query(`SELECT COUNT(*) AS total FROM jobs ${jobsWhere}`, {

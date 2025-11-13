@@ -7,17 +7,20 @@ function sleep(ms) {
 }
 
 function createTransporter(smtpConfig) {
-  if (!smtpConfig || !smtpConfig.host) {
+  if (!smtpConfig) {
     throw new Error('SMTP configuration is incomplete for marketing email service');
   }
 
-  const port = Number.isFinite(smtpConfig.port) ? smtpConfig.port : 587;
+  const host = smtpConfig.host || process.env.EMAIL_HOST || 'smtp.gmail.com';
+  const port = Number.isFinite(smtpConfig.port) ? smtpConfig.port : 465;
+  const secure = typeof smtpConfig.secure === 'boolean' ? smtpConfig.secure : port === 465;
+  const requireTLS = typeof smtpConfig.requireTLS === 'boolean' ? smtpConfig.requireTLS : port !== 465;
 
   return nodemailer.createTransport({
-    host: smtpConfig.host,
+    host,
     port,
-    secure: Boolean(smtpConfig.secure),
-    requireTLS: Boolean(smtpConfig.requireTLS),
+    secure,
+    requireTLS,
     auth:
       smtpConfig.user && smtpConfig.pass
         ? {

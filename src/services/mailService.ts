@@ -4,27 +4,28 @@ import nodemailer from 'nodemailer';
 
 // Email configuration (read from .env - do NOT hardcode credentials)
 // Expected env vars (as provided): EMAIL_HOST, EMAIL_PORT, EMAIL_SECURE, EMAIL_USER, EMAIL_PASS, FROM_DOMAIN
-const emailHost = process.env.EMAIL_HOST || 'mail.mycareerbuild.com';
-const emailPort = parseInt(process.env.EMAIL_PORT || '25', 10);
+const emailHost = process.env.EMAIL_HOST || 'smtp.gmail.com';
+const emailPort = parseInt(process.env.EMAIL_PORT || '465', 10);
 const envSecure = typeof process.env.EMAIL_SECURE !== 'undefined' ? process.env.EMAIL_SECURE === 'true' : undefined;
-const secure = typeof envSecure !== 'undefined' ? envSecure : (emailPort === 465);
+const secure = typeof envSecure !== 'undefined' ? envSecure : emailPort === 465;
 const emailUser = process.env.EMAIL_USER || '';
 const emailPass = process.env.EMAIL_PASS || '';
 const fromDomain = process.env.FROM_DOMAIN || 'mycareerbuild.com';
+const emailDebug = process.env.EMAIL_DEBUG === 'true';
 
 const emailConfig = {
   host: emailHost,
   port: emailPort,
   secure,
   auth: emailUser && emailPass ? { user: emailUser, pass: emailPass } : undefined,
-  logger: process.env.NODE_ENV !== 'production',
-  debug: process.env.NODE_ENV !== 'production',
+  logger: emailDebug,
+  debug: emailDebug,
   connectionTimeout: 60000,
   greetingTimeout: 30000,
   socketTimeout: 60000,
   tls: {
     rejectUnauthorized: false,
-  }
+  },
 };
 
 // Domain-based email addresses

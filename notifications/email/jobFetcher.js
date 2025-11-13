@@ -52,28 +52,27 @@ async function inspectJobColumns() {
   }
 
   const sequelize = getSequelize();
-  try {
-    const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
-      type: QueryTypes.SELECT,
-    });
+  const dialect = sequelize.getDialect();
+  const quoteIdentifier =
+    typeof sequelize.getQueryInterface().quoteIdentifier === 'function'
+      ? (identifier) => sequelize.getQueryInterface().quoteIdentifier(identifier)
+      : (identifier) =>
+          dialect === 'postgres'
+            ? `"${String(identifier).replace(/"/g, '""')}"`
+            : `\`${String(identifier).replace(/`/g, '``')}\``;
 
-    const columnEntries = columns
-      .map((col) => col.Field || col.column_name || col.COLUMN_NAME)
-      .filter(Boolean)
-      .map((name) => {
-        const normalized = String(name);
-        return {
-          raw: normalized,
-          lower: normalized.toLowerCase(),
-          safe: `\`${normalized}\``,
-        };
-      });
+  try {
+    const describe = await sequelize.getQueryInterface().describeTable('jobs');
+    const columnEntries = Object.keys(describe || {}).map((name) => ({
+      raw: String(name),
+      lower: String(name).toLowerCase(),
+    }));
 
     const findColumn = (...candidates) => {
       for (const candidate of candidates) {
         const match = columnEntries.find((entry) => entry.lower === String(candidate).toLowerCase());
         if (match) {
-          return match.safe;
+          return match.raw;
         }
       }
       return null;
@@ -84,6 +83,8 @@ async function inspectJobColumns() {
       jobTypeColumn: findColumn('type', 'job_type'),
       linkColumn: findColumn('applyUrl', 'link'),
       createdColumn: findColumn('createdAt', 'created_at'),
+      quoteIdentifier,
+      dialect,
     };
   } catch (error) {
     cachedJobColumnInfo = {
@@ -91,6 +92,8 @@ async function inspectJobColumns() {
       jobTypeColumn: null,
       linkColumn: null,
       createdColumn: null,
+      quoteIdentifier,
+      dialect,
     };
   }
 
@@ -100,20 +103,27 @@ async function inspectJobColumns() {
 async function getNewFresherJobs(limit = 5) {
   const sequelize = getSequelize();
   const columnInfo = await inspectJobColumns();
+  const quoteIdentifier = columnInfo.quoteIdentifier;
+  const dialect = columnInfo.dialect;
+
+  const quote = (identifier) => quoteIdentifier(identifier);
+  const tableJobs = quote('jobs');
+  const notifyColumn = quote('notify_sent');
+  const jobTypeColumn = quote(columnInfo.jobTypeColumn || 'type');
+  const createdColumn = quote(columnInfo.createdColumn || 'createdAt');
 
   const experienceSelect = columnInfo.experienceColumn
-    ? `COALESCE(${columnInfo.experienceColumn}, '') AS experience`
+    ? `COALESCE(${quote(columnInfo.experienceColumn)}, '') AS experience`
     : "'Not provided' AS experience";
-  const jobTypeColumn = columnInfo.jobTypeColumn || '`type`';
   const jobTypeSelect = `${jobTypeColumn} AS jobType`;
-  const linkSelect = columnInfo.linkColumn ? `COALESCE(${columnInfo.linkColumn}, '') AS link` : "'' AS link";
-  const createdColumn = columnInfo.createdColumn || '`createdAt`';
+  const linkSelect = columnInfo.linkColumn ? `COALESCE(${quote(columnInfo.linkColumn)}, '') AS link` : "'' AS link";
   const createdSelect = `${createdColumn} AS createdAt`;
+  const falseLiteral = dialect === 'postgres' ? 'FALSE' : '0';
 
   const jobs = await sequelize.query(
-    `SELECT id, title, company, location, ${experienceSelect}, ${jobTypeSelect}, ${linkSelect}, notify_sent AS notifySent, ${createdSelect}
-     FROM jobs
-     WHERE ${jobTypeColumn} = 'Fresher' AND notify_sent = 0
+    `SELECT id, title, company, location, ${experienceSelect}, ${jobTypeSelect}, ${linkSelect}, ${notifyColumn} AS notifySent, ${createdSelect}
+     FROM ${tableJobs}
+     WHERE ${jobTypeColumn} = 'Fresher' AND ${notifyColumn} = ${falseLiteral}
      ORDER BY ${createdColumn} DESC
      LIMIT :limit`,
     {
@@ -144,10 +154,18 @@ async function markJobsNotified(jobIds, transaction) {
   }
 
   const sequelize = getSequelize();
+  const columnInfo = await inspectJobColumns();
+  const quoteIdentifier = columnInfo.quoteIdentifier;
+  const dialect = columnInfo.dialect;
+  const tableJobs = quoteIdentifier('jobs');
+  const notifyColumn = quoteIdentifier('notify_sent');
+  const idColumn = quoteIdentifier('id');
+  const trueLiteral = dialect === 'postgres' ? 'TRUE' : '1';
+
   const [result] = await sequelize.query(
-    `UPDATE jobs
-     SET notify_sent = 1
-     WHERE id IN (:jobIds)`,
+    `UPDATE ${tableJobs}
+     SET ${notifyColumn} = ${trueLiteral}
+     WHERE ${idColumn} IN (:jobIds)`,
     {
       replacements: { jobIds },
       type: QueryTypes.BULKUPDATE,

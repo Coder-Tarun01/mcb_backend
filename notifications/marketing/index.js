@@ -341,20 +341,66 @@ function buildPersonalizedDigests({ contacts, jobs, digestSize }) {
 }
 
 function selectJobsForContact(contact, context) {
-  const { allJobs, digestLimit } = context;
+  const allJobs = Array.isArray(context.allJobs) ? context.allJobs : [];
+  const fresherJobs = Array.isArray(context.fresherJobs) ? context.fresherJobs : [];
+  const digestLimit = Math.max(1, Number(context.digestLimit) || 1);
+  const branchTokens = normalizeBranchTokens(contact?.branch);
   const contactRange = parseExperienceRange(contact?.experience);
+  const preferFresher = isFresherRange(contactRange);
 
-  if (!contactRange) {
-    return allJobs.slice(0, digestLimit);
+  const strategies = [];
+
+  if (preferFresher && fresherJobs.length > 0) {
+    strategies.push(() =>
+      applyFilters(fresherJobs, {
+        branchTokens,
+        experienceRange: contactRange,
+      })
+    );
+    strategies.push(() =>
+      applyFilters(fresherJobs, {
+        branchTokens,
+      })
+    );
+    strategies.push(() =>
+      applyFilters(fresherJobs, {
+        experienceRange: contactRange,
+      })
+    );
+    strategies.push(() => [...fresherJobs]);
   }
 
-  const matching = allJobs.filter((job) => experienceMatches(contactRange, job));
+  strategies.push(() =>
+    applyFilters(allJobs, {
+      branchTokens,
+      experienceRange: contactRange,
+    })
+  );
+  strategies.push(() =>
+    applyFilters(allJobs, {
+      branchTokens,
+    })
+  );
+  if (contactRange) {
+    strategies.push(() =>
+      applyFilters(allJobs, {
+        experienceRange: contactRange,
+      })
+    );
+  }
+  strategies.push(() => [...allJobs]);
 
-  if (matching.length === 0) {
-    return [];
+  for (const getCandidates of strategies) {
+    if (typeof getCandidates !== 'function') {
+      continue;
+    }
+    const candidates = uniqueJobs(getCandidates()).filter(Boolean);
+    if (candidates.length > 0) {
+      return candidates.slice(0, digestLimit);
+    }
   }
 
-  return matching.slice(0, digestLimit);
+  return [];
 }
 
 function filterJobsByToken(jobs, token) {
@@ -402,6 +448,98 @@ function isFresherJob(job) {
   }
   const tokens = collectJobTokens(job);
   return tokens.some((token) => token.includes('fresher'));
+}
+
+function normalizeBranchTokens(branch) {
+  if (!branch || typeof branch !== 'string') {
+    return [];
+  }
+  return branch
+    .split(/[,/&\s]+/)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length > 0);
+}
+
+function filterByBranch(jobs, branchTokens) {
+  if (!Array.isArray(jobs) || jobs.length === 0 || !Array.isArray(branchTokens) || branchTokens.length === 0) {
+    return [];
+  }
+  const seen = new Set();
+  const results = [];
+
+  for (const job of jobs) {
+    if (!job || seen.has(jobKey(job))) {
+      continue;
+    }
+    const matchesBranch = branchTokens.some((token) => matchesToken(job, token));
+    if (matchesBranch) {
+      seen.add(jobKey(job));
+      results.push(job);
+    }
+  }
+  return results;
+}
+
+function filterByExperience(jobs, experienceRange) {
+  if (!Array.isArray(jobs) || jobs.length === 0 || !experienceRange) {
+    return Array.isArray(jobs) ? [...jobs] : [];
+  }
+  return jobs.filter((job) => experienceMatches(experienceRange, job));
+}
+
+function applyFilters(jobs, { branchTokens = [], experienceRange = null } = {}) {
+  const base = Array.isArray(jobs) ? jobs.filter(Boolean) : [];
+  if (base.length === 0) {
+    return [];
+  }
+
+  let working = base;
+  if (Array.isArray(branchTokens) && branchTokens.length > 0) {
+    const branchMatches = filterByBranch(working, branchTokens);
+    if (branchMatches.length === 0) {
+      return [];
+    }
+    working = branchMatches;
+  }
+
+  if (experienceRange) {
+    const experienceMatchesList = filterByExperience(working, experienceRange);
+    if (experienceMatchesList.length === 0) {
+      return [];
+    }
+    working = experienceMatchesList;
+  }
+
+  return working;
+}
+
+function isFresherRange(range) {
+  if (!range) {
+    return false;
+  }
+  const min = Number.isFinite(range.min) ? range.min : 0;
+  const max = Number.isFinite(range.max) ? range.max : Infinity;
+  return min <= 0 && max <= 1;
+}
+
+function uniqueJobs(jobs) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return [];
+  }
+  const seen = new Set();
+  const result = [];
+  for (const job of jobs) {
+    if (!job) {
+      continue;
+    }
+    const key = jobKey(job);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(job);
+  }
+  return result;
 }
 
 function parseExperienceRange(raw) {
@@ -527,6 +665,12 @@ function aggregateJobsBySource(successes, contactJobsMap) {
     payload.aijobs = Array.from(aiJobsSet);
   }
   return payload;
+}
+
+function jobKey(job) {
+  const source = job && job.source ? String(job.source) : 'jobs';
+  const id = job && job.id !== undefined && job.id !== null ? String(job.id) : '';
+  return `${source}:${id}`;
 }
 
 const GLOBAL_KEY = '__mcbMarketingOrchestrator__';

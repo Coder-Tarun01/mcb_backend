@@ -36,7 +36,7 @@ function getTransporter() {
   const secure = resolveBoolean(process.env.EMAIL_SECURE, port === 465);
 
   transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST,
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port,
     secure,
     auth: {
