@@ -271,20 +271,34 @@ router.get('/jobs/freshers', requireAdminKey, async (req: Request, res: Response
     }
 
     const sequelizeInstance =
-      jobFetcher && typeof jobFetcher.getSequelize === 'function' ? jobFetcher.getSequelize() : sequelize;
+      jobFetcher && typeof jobFetcher.getSequelize === 'function'
+        ? jobFetcher.getSequelize()
+        : sequelize;
+    const dialect = sequelizeInstance.getDialect();
+    const queryGenerator = sequelizeInstance.getQueryInterface().queryGenerator;
+    const quoteIdentifier = (identifier: string): string => queryGenerator.quoteIdentifier(identifier);
+    const quoteTable = (tableName: string): string => queryGenerator.quoteTable(tableName);
 
     const replacements: Record<string, unknown> = {};
+    const experienceColumn = quoteIdentifier('experienceLevel');
+    const applyUrlColumn = quoteIdentifier('applyUrl');
+    const createdAtColumn = quoteIdentifier('createdAt');
+    const notifySentColumn = quoteIdentifier('notify_sent');
+    const jobTypeColumn = quoteIdentifier('type');
+    const jobsTable = quoteTable('jobs');
+    const notifySentFalse = dialect === 'postgres' ? 'FALSE' : '0';
+
     let query =
-      "SELECT id, title, company, location, " +
-      "COALESCE(experienceLevel, '') AS experience, " +
-      "type AS jobType, COALESCE(applyUrl, '') AS link, notify_sent AS notifySent, createdAt AS createdAt " +
-      "FROM jobs WHERE type = 'Fresher'";
+      'SELECT id, title, company, location, ' +
+      `COALESCE(${experienceColumn}, '') AS experience, ` +
+      `${jobTypeColumn} AS jobType, COALESCE(${applyUrlColumn}, '') AS link, ${notifySentColumn} AS notifySent, ${createdAtColumn} AS createdAt ` +
+      `FROM ${jobsTable} WHERE ${jobTypeColumn} = 'Fresher'`;
 
     if (!includeNotified) {
-      query += ' AND notify_sent = 0';
+      query += ` AND ${notifySentColumn} = ${notifySentFalse}`;
     }
 
-    query += ' ORDER BY createdAt DESC';
+    query += ` ORDER BY ${createdAtColumn} DESC`;
 
     if (limit > 0) {
       query += ' LIMIT :limit';
@@ -296,13 +310,14 @@ router.get('/jobs/freshers', requireAdminKey, async (req: Request, res: Response
       type: QueryTypes.SELECT,
     });
 
-    const statsRows = (await sequelizeInstance.query(
-      "SELECT COUNT(*) AS total, SUM(CASE WHEN notify_sent = 0 THEN 1 ELSE 0 END) AS pending " +
-        "FROM jobs WHERE type = 'Fresher'",
-      {
-        type: QueryTypes.SELECT,
-      }
-    )) as Array<{ total: number; pending: number | null }>;
+    const statsQuery =
+      `SELECT COUNT(*) AS total, ` +
+      `SUM(CASE WHEN ${notifySentColumn} = ${notifySentFalse} THEN 1 ELSE 0 END) AS pending ` +
+      `FROM ${jobsTable} WHERE ${jobTypeColumn} = 'Fresher'`;
+
+    const statsRows = (await sequelizeInstance.query(statsQuery, {
+      type: QueryTypes.SELECT,
+    })) as Array<{ total: number; pending: number | null }>;
 
     const statsRow = statsRows[0] || { total: 0, pending: 0 };
     const pending = Number(statsRow.pending ?? 0);

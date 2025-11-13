@@ -4,6 +4,7 @@ const { QueryTypes } = require('sequelize');
 let cachedModels;
 let cachedJobColumnInfo;
 let subscriberTableReady;
+let cachedQuoteHelpers;
 
 function loadModels() {
   if (cachedModels) {
@@ -44,6 +45,40 @@ function getSequelize() {
     throw new Error('Sequelize instance not found on loaded models module');
   }
   return models.sequelize;
+}
+
+function getQuoteHelpers() {
+  if (cachedQuoteHelpers) {
+    return cachedQuoteHelpers;
+  }
+
+  const sequelize = getSequelize();
+  const queryGenerator = sequelize.getQueryInterface().queryGenerator;
+  const quoteIdentifier = (identifier) => {
+    if (!identifier) {
+      return identifier;
+    }
+    if (identifier.includes('.')) {
+      return identifier
+        .split('.')
+        .map((part) => quoteIdentifier(part))
+        .join('.');
+    }
+    const trimmed = String(identifier).replace(/^["`]|["`]$/g, '');
+    return queryGenerator.quoteIdentifier(trimmed);
+  };
+
+  cachedQuoteHelpers = {
+    quoteIdentifier,
+    quoteTable: (tableName) => queryGenerator.quoteTable(tableName),
+  };
+
+  return cachedQuoteHelpers;
+}
+
+function quoteIfNeeded(identifier) {
+  const { quoteIdentifier } = getQuoteHelpers();
+  return quoteIdentifier(identifier);
 }
 
 async function inspectJobColumns() {
@@ -99,22 +134,29 @@ async function inspectJobColumns() {
 
 async function getNewFresherJobs(limit = 5) {
   const sequelize = getSequelize();
+  const dialect = sequelize.getDialect();
   const columnInfo = await inspectJobColumns();
+  const { quoteIdentifier, quoteTable } = getQuoteHelpers();
 
   const experienceSelect = columnInfo.experienceColumn
-    ? `COALESCE(${columnInfo.experienceColumn}, '') AS experience`
+    ? `COALESCE(${quoteIfNeeded(columnInfo.experienceColumn)}, '') AS experience`
     : "'Not provided' AS experience";
-  const jobTypeColumn = columnInfo.jobTypeColumn || '`type`';
-  const jobTypeSelect = `${jobTypeColumn} AS jobType`;
-  const linkSelect = columnInfo.linkColumn ? `COALESCE(${columnInfo.linkColumn}, '') AS link` : "'' AS link";
-  const createdColumn = columnInfo.createdColumn || '`createdAt`';
-  const createdSelect = `${createdColumn} AS createdAt`;
+  const jobTypeColumn = columnInfo.jobTypeColumn || 'type';
+  const jobTypeSelect = `${quoteIfNeeded(jobTypeColumn)} AS jobType`;
+  const linkSelect = columnInfo.linkColumn
+    ? `COALESCE(${quoteIfNeeded(columnInfo.linkColumn)}, '') AS link`
+    : "'' AS link";
+  const createdColumn = columnInfo.createdColumn || 'createdAt';
+  const createdSelect = `${quoteIfNeeded(createdColumn)} AS createdAt`;
+
+  const notifySentColumn = quoteIdentifier('notify_sent');
+  const notifySentFalse = dialect === 'postgres' ? 'FALSE' : '0';
 
   const jobs = await sequelize.query(
-    `SELECT id, title, company, location, ${experienceSelect}, ${jobTypeSelect}, ${linkSelect}, notify_sent AS notifySent, ${createdSelect}
-     FROM jobs
-     WHERE ${jobTypeColumn} = 'Fresher' AND notify_sent = 0
-     ORDER BY ${createdColumn} DESC
+    `SELECT id, title, company, location, ${experienceSelect}, ${jobTypeSelect}, ${linkSelect}, ${quoteIdentifier('notify_sent')} AS notifySent, ${createdSelect}
+     FROM ${quoteTable('jobs')}
+     WHERE ${quoteIfNeeded(jobTypeColumn)} = 'Fresher' AND ${notifySentColumn} = ${notifySentFalse}
+     ORDER BY ${quoteIfNeeded(createdColumn)} DESC
      LIMIT :limit`,
     {
       replacements: { limit },
