@@ -241,26 +241,6 @@ async function resolveAiJobColumnInfo(sequelize) {
           skillsColumn: findColumn('skills'),
         };
       }
-
-      const columns = await sequelize.query('SHOW COLUMNS FROM aijobs', {
-        type: QueryTypes.SELECT,
-      });
->>>>>>> ed875dd4ab4252a5050f15e4516a68a8721a4d09
-      const findColumn = buildColumnFinder(columns);
-
-      return {
-        createdColumn: findColumn('created_at', 'createdAt'),
-        postedColumn: findColumn('posted_date', 'postedDate'),
-        jobTypeColumn: findColumn('job_type', 'jobType'),
-        remoteColumn: findColumn('remote', 'is_remote', 'isRemote'),
-        experienceColumn: findColumn('experience'),
-        applyUrlColumn: findColumn('job_url', 'applyUrl', 'link'),
-        locationTypeColumn: findColumn('location_type', 'job_type', 'type'),
-        notifySentColumn: findColumn('notify_sent', 'notifysent'),
-        notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
-        categoryColumn: findColumn('category', 'job_type'),
-        skillsColumn: findColumn('skills'),
-      };
     } catch (error) {
       return {
         createdColumn: null,
@@ -364,12 +344,8 @@ async function ensureNotificationColumns(sequelize) {
 }
 
 function createJobsRepository({ sequelize = getSequelize() } = {}) {
-<<<<<<< HEAD
   configureDialect(sequelize);
-
-=======
   const { quoteIdentifier, qualifyColumn } = createQuoteHelpers(sequelize);
->>>>>>> ed875dd4ab4252a5050f15e4516a68a8721a4d09
   async function fetchPendingJobs({ limit, createdAfter }) {
     await ensureNotificationColumns(sequelize);
     const columns = await resolveJobColumnInfo(sequelize);
