@@ -6,13 +6,28 @@ import { sequelize, testConnection } from './models';
 import { runSeed } from './utils/seed';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 4000;
+const DB_SCHEMA = process.env.DB_SCHEMA || 'public';
 
 async function start() {
   try {
     // Test database connection
     await testConnection();
-    
+
     const currentDialect = sequelize.getDialect();
+
+    // Ensure the configured schema exists (PostgreSQL only)
+    try {
+      if (currentDialect === 'postgres' && DB_SCHEMA !== 'public') {
+        await sequelize.createSchema(DB_SCHEMA, { logging: false });
+        console.log(`📁 Schema ensured: ${DB_SCHEMA}`);
+      }
+    } catch (schemaError: any) {
+      if (schemaError?.original?.code === '42P06') {
+        console.log(`ℹ️ Schema "${DB_SCHEMA}" already exists`);
+      } else {
+        console.warn(`⚠️ Unable to ensure schema "${DB_SCHEMA}":`, schemaError.message);
+      }
+    }
 
     // Disable referential integrity checks for MySQL only
     if (currentDialect === 'mysql') {
@@ -53,7 +68,11 @@ async function start() {
         currentDialect === 'postgres'
           ? 'PostgreSQL'
           : currentDialect.toUpperCase();
-      console.log(`🗄️  Database: ${readableDialect}`);
+      const displayPort = process.env.DB_PORT || (currentDialect === 'postgres' ? '5432' : '3306');
+      console.log(`🗄️  Database: ${readableDialect} @ ${process.env.DB_HOST || 'localhost'}:${displayPort} / ${process.env.DB_NAME || 'mcb'}`);
+      if (currentDialect === 'postgres') {
+        console.log(`📁 Schema: ${DB_SCHEMA}`);
+      }
 
       try {
         const notificationModulePath = path.resolve(__dirname, '../notifications/email');

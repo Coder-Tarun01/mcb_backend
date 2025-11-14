@@ -7,7 +7,7 @@
     "test:slug": "npm run build && node dist/scripts/test-slug-utils.js",
     "test:redirect": "npm run build && node dist/scripts/test-canonical-redirect.js",
     "backfill:slugs": "node scripts/backfill-job-slugs.js",
-    "dev": "ts-node-dev --poll --respawn --transpile-only src/server.ts",
+    "dev": "cross-env TS_NODE_TRANSPILE_ONLY=1 TS_NODE_IGNORE_DIAGNOSTICS=2532,7006,7053,2554 tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "start:prod": "NODE_ENV=production node dist/server.js",
@@ -51,9 +51,10 @@
     "mysql2": "^3.15.1",
     "node-cron": "^3.0.3",
     "nodemailer": "^7.0.10",
-    "pg": "^8.13.1",
+    "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.7",
+    "fuse.js": "^7.0.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^13.0.0"
@@ -70,7 +71,9 @@
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
     "@types/uuid": "^10.0.0",
+    "cross-env": "^10.1.0",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.9.2"
   }
 }

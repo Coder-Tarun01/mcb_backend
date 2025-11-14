@@ -5,6 +5,9 @@ import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { QueryTypes } from 'sequelize';
 import { authenticate } from '../middleware/auth';
+import { cached, purgeCache } from '../middleware/cache';
+import { rateLimit } from '../middleware/rateLimiter';
+import { getFresherJobs, readNotificationLogs } from '../services/notificationQueries';
 import {
   getNotifications,
   markAsRead,
@@ -166,52 +169,6 @@ function normalizeCsvRow(row: Record<string, unknown>, index: number): CsvUserRo
   };
 }
 
-async function readLogFile(filePath: string, limit: number): Promise<LogEntry[]> {
-  try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    const lines = raw
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-
-    const limitedLines = limit > 0 ? lines.slice(-limit) : lines;
-
-    return limitedLines.map((line) => {
-      const match = line.match(/^\[(.+?)\]\s+(\w+)(?:\s*\|\s*(.*))?$/);
-      if (!match) {
-        return {
-          timestamp: null,
-          status: 'UNKNOWN',
-          raw: line,
-        };
-      }
-
-      const [, timestamp, status, metaString] = match;
-      let meta: LogEntry['meta'];
-      if (metaString) {
-        const trimmedMeta = metaString.trim();
-        try {
-          meta = JSON.parse(trimmedMeta);
-        } catch (err) {
-          meta = trimmedMeta;
-        }
-      }
-
-      return {
-        timestamp: timestamp ?? null,
-        status: status ?? 'UNKNOWN',
-        meta,
-        raw: line,
-      };
-    });
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
-}
-
 async function ensureLogDirectory(): Promise<void> {
   await fs.mkdir(LOG_DIRECTORY, { recursive: true });
 }
@@ -258,17 +215,45 @@ function requireAdminKey(req: Request, res: Response, next: NextFunction): void 
   res.status(401).json({ success: false, error: 'Invalid or missing admin key' });
 }
 
-router.get('/jobs/freshers', requireAdminKey, async (req: Request, res: Response) => {
-  try {
-    const includeNotified = parseBoolean(req.query.includeNotified ?? req.query.include_notified, false);
-    const limitParam = req.query.limit;
-    let limit = 0;
-    if (typeof limitParam === 'string') {
-      const parsed = Number.parseInt(limitParam, 10);
-      if (!Number.isNaN(parsed) && parsed >= 0) {
-        limit = Math.min(parsed, 500);
+router.get(
+  '/jobs/freshers',
+  requireAdminKey,
+  rateLimit({
+    limit: 20,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/jobs/freshers exceeded by ${req.ip}`);
+    },
+  }),
+  cached(
+    (req) =>
+      `notifications:jobs:freshers:${String(req.query.includeNotified ?? req.query.include_notified ?? 'false')}:${String(
+        req.query.limit ?? 'default'
+      )}`,
+    10,
+    async (req: Request, res: Response) => {
+      const includeNotified = parseBoolean(req.query.includeNotified ?? req.query.include_notified, false);
+      const limitParam = req.query.limit;
+      let limit = 0;
+      if (typeof limitParam === 'string') {
+        const parsed = Number.parseInt(limitParam, 10);
+        if (!Number.isNaN(parsed) && parsed >= 0) {
+          limit = Math.min(parsed, 500);
+        }
       }
+
+      const { jobs, stats } = await getFresherJobs({ includeNotified, limit });
+
+      res.json({
+        success: true,
+        message: 'Fresher jobs retrieved',
+        data: {
+          jobs,
+          stats,
+        },
+      });
     }
+<<<<<<< HEAD
 
     const sequelizeInstance =
       jobFetcher && typeof jobFetcher.getSequelize === 'function'
@@ -344,6 +329,10 @@ router.get('/jobs/freshers', requireAdminKey, async (req: Request, res: Response
     });
   }
 });
+=======
+  )
+);
+>>>>>>> ed875dd4ab4252a5050f15e4516a68a8721a4d09
 
 router.post(
   '/upload-csv',
@@ -486,6 +475,9 @@ router.post(
         }
       });
 
+      purgeCache('notifications:marketing:contacts*');
+      purgeCache('notifications:marketing:health');
+
       res.json({
         success: true,
         message: 'Subscriber list processed successfully',
@@ -519,136 +511,190 @@ router.get('/send-mails', requireAdminKey, async (_req: Request, res: Response) 
   }
 });
 
-router.get('/logs', requireAdminKey, async (req: Request, res: Response) => {
-  try {
-    await ensureLogDirectory();
-
-    const limitParam = req.query.limit;
-    let limit = 50;
-    if (typeof limitParam === 'string') {
-      const parsed = Number.parseInt(limitParam, 10);
-      if (!Number.isNaN(parsed) && parsed >= 0) {
-        limit = Math.min(parsed, 500);
+router.get(
+  '/logs',
+  requireAdminKey,
+  rateLimit({
+    limit: 15,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/logs exceeded by ${req.ip}`);
+    },
+  }),
+  cached((req) => `notifications:logs:${String(req.query.limit ?? 'default')}`, 10, async (req: Request, res: Response) => {
+    try {
+      const limitParam = req.query.limit;
+      let limit = 50;
+      if (typeof limitParam === 'string') {
+        const parsed = Number.parseInt(limitParam, 10);
+        if (!Number.isNaN(parsed) && parsed >= 0) {
+          limit = Math.min(parsed, 500);
+        }
       }
-    }
 
-    const [successLogs, failedLogs] = await Promise.all([
-      readLogFile(SUCCESS_LOG, limit),
-      readLogFile(FAILED_LOG, limit),
-    ]);
+      await ensureLogDirectory();
+      const { success, failed } = await readNotificationLogs(limit);
 
-    res.json({
-      success: true,
-      message: 'Notification logs retrieved',
-      data: {
-        success: successLogs,
-        failed: failedLogs,
-      },
-    });
-  } catch (error: any) {
-    console.error('Failed to load notification logs', error);
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to load notification logs',
-    });
-  }
-});
-
-router.get('/marketing/health', async (req: Request, res: Response) => {
-  if (!marketingController || typeof marketingController.health !== 'function') {
-    res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
-    return;
-  }
-
-  await marketingController.health(req, res);
-});
-
-router.post('/marketing/trigger', requireAdminKey, async (req: Request, res: Response) => {
-  if (!marketingController || typeof marketingController.trigger !== 'function') {
-    res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
-    return;
-  }
-
-  await marketingController.trigger(req, res);
-});
-
-router.get('/marketing/contacts', requireAdminKey, async (req: Request, res: Response) => {
-  try {
-    const pageParam = Number.parseInt(String(req.query.page ?? '1'), 10);
-    const targetPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-
-    const pageSizeParam = Number.parseInt(String(req.query.pageSize ?? MARKETING_CONTACTS_DEFAULT_PAGE_SIZE), 10);
-    const pageSize = Math.max(1, Math.min(Number.isFinite(pageSizeParam) ? pageSizeParam : MARKETING_CONTACTS_DEFAULT_PAGE_SIZE, 100));
-
-    const searchRaw = typeof req.query.search === 'string' ? req.query.search.trim() : '';
-    const searchValue = searchRaw.length > 0 ? `%${searchRaw.toLowerCase()}%` : null;
-
-    const sortByParam = typeof req.query.sortBy === 'string' ? req.query.sortBy.toLowerCase() : 'created_at';
-    const sortDirectionParam = typeof req.query.sortDirection === 'string' ? req.query.sortDirection.toUpperCase() : 'DESC';
-    const allowedSortColumns: Record<string, string> = {
-      created_at: 'created_at',
-      full_name: 'full_name',
-      email: 'email',
-    };
-    const sortColumn = allowedSortColumns[sortByParam] || 'created_at';
-    const sortDirection = sortDirectionParam === 'ASC' ? 'ASC' : 'DESC';
-
-    const whereClause = searchValue
-      ? 'WHERE LOWER(full_name) LIKE :search OR LOWER(email) LIKE :search OR LOWER(branch) LIKE :search OR LOWER(experience) LIKE :search'
-      : '';
-
-    const replacements: Record<string, unknown> = {
-      limit: pageSize,
-      offset: (targetPage - 1) * pageSize,
-    };
-    if (searchValue) {
-      replacements.search = searchValue;
-    }
-
-    const contactRowsPromise = sequelize.query(
-      `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
-       FROM marketing_contacts
-       ${whereClause}
-       ORDER BY ${sortColumn} ${sortDirection}
-       LIMIT :limit OFFSET :offset`,
-      {
-        replacements,
-        type: QueryTypes.SELECT,
-      }
-    );
-
-    const countRowsPromise = sequelize.query(
-      `SELECT COUNT(*) AS total FROM marketing_contacts ${whereClause}`,
-      {
-        replacements: searchValue ? { search: searchValue } : undefined,
-        type: QueryTypes.SELECT,
-      }
-    );
-
-    const [contactRows, countRows] = await Promise.all([contactRowsPromise, countRowsPromise]);
-
-    const total = Number((countRows[0] as any)?.total ?? 0);
-    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-
-    res.json({
-      success: true,
-      data: {
-        contacts: contactRows.map(mapMarketingContactRow),
-        pagination: {
-          page: targetPage,
-          pageSize,
-          total,
-          totalPages,
-          hasNextPage: totalPages > 0 && targetPage < totalPages,
-          hasPrevPage: targetPage > 1,
+      res.json({
+        success: true,
+        data: {
+          success,
+          failed,
         },
-      },
-    });
-  } catch (error) {
-    console.error('Failed to load marketing contacts', error);
-    res.status(500).json({ success: false, error: 'Failed to load marketing contacts' });
+      });
+    } catch (error: any) {
+      console.error('Failed to load notification logs', error);
+      res.status(500).json({
+        success: false,
+        error: error?.message || 'Failed to load notification logs',
+      });
+    }
+  })
+);
+
+router.get(
+  '/marketing/health',
+  rateLimit({
+    limit: 20,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/marketing/health exceeded by ${req.ip}`);
+    },
+  }),
+  cached('notifications:marketing:health', 10, async (req: Request, res: Response) => {
+    if (!marketingController || typeof marketingController.health !== 'function') {
+      res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
+      return;
+    }
+
+    await marketingController.health(req, res);
+  })
+);
+
+router.post(
+  '/marketing/trigger',
+  requireAdminKey,
+  rateLimit({
+    limit: 10,
+    windowMs: 60_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/marketing/trigger exceeded by ${req.ip}`);
+    },
+  }),
+  async (req: Request, res: Response) => {
+    if (!marketingController || typeof marketingController.trigger !== 'function') {
+      res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
+      return;
+    }
+
+    await marketingController.trigger(req, res);
+    purgeCache('notifications:jobs:freshers*');
+    purgeCache('notifications:marketing:health');
   }
-});
+);
+
+router.get(
+  '/marketing/contacts',
+  requireAdminKey,
+  rateLimit({
+    limit: 20,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/marketing/contacts exceeded by ${req.ip}`);
+    },
+  }),
+  cached(
+    (req) =>
+      `notifications:marketing:contacts:${JSON.stringify({
+        page: req.query.page,
+        pageSize: req.query.pageSize,
+        search: req.query.search,
+        sortBy: req.query.sortBy,
+        sortDirection: req.query.sortDirection,
+      })}`,
+    10,
+    async (req: Request, res: Response) => {
+      try {
+        const pageParam = Number.parseInt(String(req.query.page ?? '1'), 10);
+        const targetPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+
+        const pageSizeParam = Number.parseInt(String(req.query.pageSize ?? MARKETING_CONTACTS_DEFAULT_PAGE_SIZE), 10);
+        const pageSize = Math.max(
+          1,
+          Math.min(Number.isFinite(pageSizeParam) ? pageSizeParam : MARKETING_CONTACTS_DEFAULT_PAGE_SIZE, 100)
+        );
+
+        const searchRaw = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+        const searchValue = searchRaw.length > 0 ? `%${searchRaw.toLowerCase()}%` : null;
+
+        const sortByParam = typeof req.query.sortBy === 'string' ? req.query.sortBy.toLowerCase() : 'created_at';
+        const sortDirectionParam = typeof req.query.sortDirection === 'string' ? req.query.sortDirection.toUpperCase() : 'DESC';
+        const allowedSortColumns: Record<string, string> = {
+          created_at: 'created_at',
+          full_name: 'full_name',
+          email: 'email',
+        };
+        const sortColumn = allowedSortColumns[sortByParam] || 'created_at';
+        const sortDirection = sortDirectionParam === 'ASC' ? 'ASC' : 'DESC';
+
+        const whereClause = searchValue
+          ? 'WHERE LOWER(full_name) LIKE :search OR LOWER(email) LIKE :search OR LOWER(branch) LIKE :search OR LOWER(experience) LIKE :search'
+          : '';
+
+        const replacements: Record<string, unknown> = {
+          limit: pageSize,
+          offset: (targetPage - 1) * pageSize,
+        };
+        if (searchValue) {
+          replacements.search = searchValue;
+        }
+
+        const contactRowsPromise = sequelize.query(
+          `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
+           FROM marketing_contacts
+           ${whereClause}
+           ORDER BY ${sortColumn} ${sortDirection}
+           LIMIT :limit OFFSET :offset`,
+          {
+            replacements,
+            type: QueryTypes.SELECT,
+          }
+        );
+
+        const countRowsPromise = sequelize.query(
+          `SELECT COUNT(*) AS total FROM marketing_contacts ${whereClause}`,
+          {
+            replacements: searchValue ? { search: searchValue } : undefined,
+            type: QueryTypes.SELECT,
+          }
+        );
+
+        const [contactRows, countRows] = await Promise.all([contactRowsPromise, countRowsPromise]);
+
+        const total = Number((countRows[0] as any)?.total ?? 0);
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+
+        res.json({
+          success: true,
+          data: {
+            contacts: contactRows.map(mapMarketingContactRow),
+            pagination: {
+              page: targetPage,
+              pageSize,
+              total,
+              totalPages,
+              hasNextPage: totalPages > 0 && targetPage < totalPages,
+              hasPrevPage: targetPage > 1,
+            },
+          },
+        });
+      } catch (error) {
+        console.error('Failed to load marketing contacts', error);
+        res.status(500).json({ success: false, error: 'Failed to load marketing contacts' });
+      }
+    }
+  )
+);
 
 router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Response) => {
   try {
@@ -719,6 +765,8 @@ router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Re
       message: 'Marketing contact created',
       data: contact,
     });
+    purgeCache('notifications:marketing:contacts*');
+    purgeCache('notifications:marketing:health');
   } catch (error) {
     console.error('Failed to create marketing contact', error);
     res.status(500).json({ success: false, error: 'Failed to create marketing contact' });
@@ -797,6 +845,8 @@ router.put('/marketing/contacts/:id', requireAdminKey, async (req: Request, res:
       message: 'Marketing contact updated',
       data: updated,
     });
+    purgeCache('notifications:marketing:contacts*');
+    purgeCache('notifications:marketing:health');
   } catch (error) {
     console.error('Failed to update marketing contact', error);
     res.status(500).json({ success: false, error: 'Failed to update marketing contact' });
@@ -836,6 +886,8 @@ router.delete('/marketing/contacts/:id', requireAdminKey, async (req: Request, r
       message: 'Marketing contact deleted',
       data: { id },
     });
+    purgeCache('notifications:marketing:contacts*');
+    purgeCache('notifications:marketing:health');
   } catch (error) {
     console.error('Failed to delete marketing contact', error);
     res.status(500).json({ success: false, error: 'Failed to delete marketing contact' });
