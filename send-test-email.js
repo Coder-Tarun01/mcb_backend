@@ -2,17 +2,45 @@ const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 async function sendTestEmail() {
-  console.log('📧 Sending test email to prasanthkathi05@gmail.com...');
-  
-  // Use current environment configuration
+  const targetEmail = process.argv[2] || process.env.TEST_EMAIL_TO || 'prasanthkathi05@gmail.com';
+
+  const host = process.env.MARKETING_SMTP_HOST || process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = parseInt(process.env.MARKETING_SMTP_PORT || process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10);
+  const secureExplicit =
+    process.env.MARKETING_SMTP_SECURE ??
+    process.env.EMAIL_SECURE ??
+    process.env.SMTP_SECURE ??
+    (port === 465 ? 'true' : 'false');
+  const requireTlsExplicit =
+    process.env.MARKETING_SMTP_REQUIRE_TLS ??
+    process.env.EMAIL_REQUIRE_TLS ??
+    (port === 587 ? 'true' : 'false');
+
+  const secure = String(secureExplicit).toLowerCase() === 'true';
+  const requireTLS = String(requireTlsExplicit).toLowerCase() === 'true';
+  const user = process.env.MARKETING_SMTP_USER || process.env.EMAIL_USER || process.env.SMTP_USER;
+  const pass = process.env.MARKETING_SMTP_PASS || process.env.EMAIL_PASS || process.env.SMTP_PASS;
+  const fromName = process.env.MARKETING_FROM_NAME || process.env.EMAIL_FROM_NAME || 'mycareerbuild Jobs';
+  const fromEmail = process.env.MARKETING_FROM_EMAIL || process.env.EMAIL_FROM_EMAIL || user;
+
+  if (!user || !pass) {
+    console.error('❌ Missing SMTP credentials. Please set EMAIL_USER/EMAIL_PASS or MARKETING_SMTP_USER/MARKETING_SMTP_PASS.');
+    process.exit(1);
+  }
+
+  console.log(`📧 Sending test email to ${targetEmail}...`);
+  console.log(`🔧 SMTP Host: ${host}`);
+  console.log(`🔧 SMTP Port: ${port}`);
+  console.log(`🔧 SMTP Secure: ${secure}`);
+  console.log(`🔧 SMTP Require TLS: ${requireTLS}`);
+
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465',
-    auth: {
-      user: process.env.SMTP_USER || 'tanasvi.dev@gmail.com',
-      pass: process.env.SMTP_PASS,
-    },
+    host,
+    port,
+    secure,
+    requireTLS,
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false },
   });
 
   try {
@@ -22,8 +50,8 @@ async function sendTestEmail() {
 
     console.log('📤 Sending email...');
     const info = await transporter.sendMail({
-      from: `"mycareerbuild Jobs" <${process.env.SMTP_USER || 'tanasvi.dev@gmail.com'}>`,
-      to: 'prasanthkathi05@gmail.com',
+      from: `"${fromName}" <${fromEmail || user}>`,
+      to: targetEmail,
       subject: 'Test Email from mycareerbuild Jobs System',
       html: `
         <!DOCTYPE html>
@@ -60,8 +88,8 @@ async function sendTestEmail() {
                 <h3 style="color: #1e293b; margin: 0 0 10px 0;">Test Details:</h3>
                 <ul style="color: #64748b; margin: 0; padding-left: 20px;">
                   <li>Sent at: ${new Date().toLocaleString()}</li>
-                  <li>From: mycareerbuild Jobs System</li>
-                  <li>SMTP: ${process.env.SMTP_HOST || 'smtp.gmail.com'}</li>
+                  <li>From: ${fromEmail || user}</li>
+                  <li>SMTP: ${host}</li>
                   <li>Status: Successfully Delivered</li>
                 </ul>
               </div>
@@ -87,8 +115,8 @@ async function sendTestEmail() {
         
         Test Details:
         - Sent at: ${new Date().toLocaleString()}
-        - From: mycareerbuild Jobs System
-        - SMTP: ${process.env.SMTP_HOST || 'smtp.gmail.com'}
+        - From: ${fromEmail || user}
+        - SMTP: ${host}
         - Status: Successfully Delivered
         
         © 2024 mycareerbuild Jobs. All rights reserved.
@@ -98,8 +126,8 @@ async function sendTestEmail() {
     console.log('✅ Email sent successfully!');
     console.log('📧 Message ID:', info.messageId);
     console.log('📧 Response:', info.response);
-    console.log('📧 To: prasanthkathi05@gmail.com');
-    console.log('📧 From:', process.env.SMTP_USER || 'tanasvi.dev@gmail.com');
+    console.log('📧 To:', targetEmail);
+    console.log('📧 From:', fromEmail || user);
     
     console.log('\n📋 Next steps:');
     console.log('1. Check your email inbox');
@@ -112,12 +140,12 @@ async function sendTestEmail() {
     
     if (error.code === 'EAUTH') {
       console.log('\n🔧 Authentication Error:');
-      console.log('- Check SMTP_USER and SMTP_PASS in .env');
+      console.log('- Check EMAIL_USER/EMAIL_PASS or MARKETING_SMTP_USER/MARKETING_SMTP_PASS in .env');
       console.log('- Use app password instead of regular password');
       console.log('- Enable 2-factor authentication if using Gmail');
     } else if (error.code === 'ECONNECTION') {
       console.log('\n🔧 Connection Error:');
-      console.log('- Check SMTP_HOST and SMTP_PORT');
+      console.log('- Check EMAIL_HOST/MARKETING_SMTP_HOST and port values');
       console.log('- Verify server is accessible');
       console.log('- Check firewall settings');
     }

@@ -8,10 +8,11 @@ The marketing notification module sends periodic job digests to subscribed marke
 
 - Pulls pending jobs from `jobs` and `aijobs`, deduplicates, and composes a daily digest (top five roles).
 - Sends personalised HTML + text emails with unsubscribe guidance.
-- Batches delivery (default 50 contacts), enforces concurrency (default 5), and retries with exponential backoff (1m, 5m, 15m).
+- Optionally broadcasts the same digest over Telegram for contacts linked with a chat id.
+- Batches delivery (default 50 contacts), enforces concurrency (default 5), and retries with exponential backoff (1m, 5m, 15m) per channel.
 - Logs success and failure events under `notifications/logs`.
 - Exposes health and manual-trigger endpoints under `/notifications/marketing`.
-- Marks jobs as notified once at least one email succeeds, preventing duplicate sends.
+- Marks jobs as notified once at least one channel succeeds, preventing duplicate sends.
 
 ## Configuration
 
@@ -40,13 +41,23 @@ MARKETING_FROM_EMAIL=careers@example.com
 MARKETING_HEALTH_TOKEN=replace-with-token
 MARKETING_ALERT_FAILURE_RATE=10
 MARKETING_ALERT_BACKLOG_THRESHOLD=500
+MARKETING_TELEGRAM_ENABLED=false
+MARKETING_TELEGRAM_BOT_TOKEN=123456:replace-me
+MARKETING_TELEGRAM_DRY_RUN=true
+MARKETING_TELEGRAM_BATCH_SIZE=50
+MARKETING_TELEGRAM_CONCURRENCY=5
+MARKETING_TELEGRAM_BATCH_PAUSE_MS=2000
+MARKETING_TELEGRAM_MAX_RETRIES=2
+MARKETING_TELEGRAM_RETRY_BACKOFF_MS=2000,5000,10000
+MARKETING_TELEGRAM_TIMEOUT_MS=20000
+MARKETING_TELEGRAM_DISABLE_LINK_PREVIEW=true
 ```
 
 For production, store SMTP credentials in the secrets manager rather than `.env`.
 
 ## Deployment Checklist
 
-1. **Migration**: run `src/migrations/20251110_create_marketing_contacts.sql` against the target database.
+1. **Migration**: run `src/migrations/20251110_create_marketing_contacts.sql` and `src/migrations/20251112_add_telegram_chat_id_to_marketing_contacts.sql` against the target database.
 2. **Environment**: configure SMTP and marketing-specific environment variables (see above).
 3. **Cron**: ensure the process manager (PM2/Systemd) keeps the Node server active; the module self-schedules using the cron expression.
 4. **Smoke test**:
@@ -65,9 +76,9 @@ For production, store SMTP credentials in the secrets manager rather than `.env`
 ## Operational Runbook
 
 - **Rerun failed jobs**: `POST /notifications/marketing/trigger` with `{ "force": true }` to bypass skip conditions. Check logs for persistent SMTP errors.
-- **Import contacts**: seed `marketing_contacts` via migration or manual SQL; ensure unique emails with valid names. Future enhancement placeholders exist for CSV/API import.
-- **Pause/resume**: flip `MARKETING_EMAIL_ENABLED` or set `MARKETING_EMAIL_DRY_RUN=true` to simulate sends without dispatching emails.
-- **Logs**: inspect `notifications/logs/marketing-success.log` (success) and `marketing-failed.log` (errors). Each line is JSON for easy parsing.
+- **Import contacts**: seed `marketing_contacts` via migration or manual SQL; ensure unique emails with valid names and optional `telegram_chat_id`.
+- **Pause/resume**: flip `MARKETING_EMAIL_ENABLED` for email, and `MARKETING_TELEGRAM_ENABLED` (or the respective `*_DRY_RUN` flags) to simulate sends without dispatching.
+- **Logs**: inspect `notifications/logs/marketing-success.log` (success) and `marketing-failed.log` (errors). Each line includes the `transport` used (email or telegram).
 - **Alerts**: warnings print to stdout if failure rate exceeds 10% or backlog surpasses 500 pending jobs. Integrate with monitoring for automated alerts.
 - **Troubleshooting**:
   - SMTP authentication / TLS issues: verify credentials, check SPF/DKIM/DMARC records.
@@ -81,6 +92,7 @@ For production, store SMTP credentials in the secrets manager rather than `.env`
 3. Run `POST /notifications/marketing/trigger { "force": true }`.
 4. Confirm:
    - Emails delivered (or dry-run log entries recorded).
+   - Telegram messages delivered to linked chat ids (or dry-run log entries recorded).
    - `notify_sent` flipped to `1`.
    - CTA links point to `https://mycareerbuild.com/jobs/{id}` or `/aijobs/{id}`.
    - Logs capture outcomes with matching batch IDs.
@@ -97,7 +109,6 @@ Comments within the code mark placeholders for:
 
 - Contact segmentation by branch/experience.
 - Preference-driven frequency controls.
-- Alternate channels (e.g., Telegram).
 - Analytics and attribution tracking.
 
 These are intentionally left as stubs for subsequent iterations.

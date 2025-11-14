@@ -13,9 +13,9 @@ dotenv.config();
 
 const {
   DB_HOST = 'localhost',
-  DB_PORT = 5432,
-  DB_NAME = 'mcb',
-  DB_USER = 'postgres',
+  DB_PORT = 3306,
+  DB_NAME = 'mycareerbuild',
+  DB_USER = 'root',
   DB_PASSWORD = 'secret',
   NODE_ENV = 'development'
 } = process.env;
@@ -28,12 +28,16 @@ async function checkResumesTable() {
   // Connect to the database
   const sequelize = new Sequelize({
     database: DB_NAME,
-    dialect: 'postgres',
+    dialect: 'mysql',
     host: DB_HOST,
     port: DB_PORT,
     username: DB_USER,
     password: DB_PASSWORD,
-    logging: false
+    logging: false, // Disable logging for cleaner output
+    dialectOptions: {
+      charset: 'utf8mb4',
+      collate: 'utf8mb4_unicode_ci'
+    }
   });
 
   try {
@@ -42,12 +46,7 @@ async function checkResumesTable() {
     console.log('✅ Connected to database successfully');
 
     // Check if table exists
-    const [tables] = await sequelize.query(`
-      SELECT tablename
-      FROM pg_tables
-      WHERE schemaname = current_schema()
-        AND tablename = 'resumes'
-    `);
+    const [tables] = await sequelize.query("SHOW TABLES LIKE 'resumes'");
     if (tables.length === 0) {
       console.log('❌ Resumes table does not exist!');
       return;
@@ -55,16 +54,7 @@ async function checkResumesTable() {
     console.log('✅ Resumes table exists');
 
     // Get table structure
-    const [columns] = await sequelize.query(`
-      SELECT column_name AS "Field",
-             data_type AS "Type",
-             is_nullable AS "Null",
-             column_default AS "Default"
-      FROM information_schema.columns
-      WHERE table_schema = current_schema()
-        AND table_name = 'resumes'
-      ORDER BY ordinal_position
-    `);
+    const [columns] = await sequelize.query("DESCRIBE resumes");
     console.log('\n📋 Current table structure:');
     console.table(columns);
 

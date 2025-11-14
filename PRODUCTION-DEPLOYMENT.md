@@ -1,154 +1,337 @@
-# 🚀 Production Deployment Guide (PostgreSQL)
+# 🚀 Production Deployment Guide
 
-This guide walks through deploying the mycareerbuild backend on a PostgreSQL database stack (no Docker required). Adjust the steps for your infrastructure provider or automation tooling as needed.
+This guide will help you deploy your mycareerbuild Job Portal backend to production using MySQL database.
 
 ## 📋 Prerequisites
 
-- PostgreSQL 13+ provisioned (managed service or self-hosted)
-- Node.js 18+ on the application server
-- Reverse proxy or platform TLS termination ready (Nginx, AWS ALB, etc.)
-- Access to configure environment variables and secrets
+- Docker and Docker Compose installed
+- MySQL 8.0+ (if not using Docker)
+- Node.js 20+ (for local development)
+- SSL certificates (for HTTPS in production)
 
-## 🗄️ Database Setup (PostgreSQL)
+## 🗄️ Database Migration: SQLite → MySQL
 
-### 1. Create database and role
+### Step 1: Setup MySQL Database
 
 ```bash
-# Log into your PostgreSQL server as an admin role
-psql -h <host> -U postgres
+# Create and setup MySQL database
+npm run setup:db
 
--- Create the application database (adjust encoding if required)
-CREATE DATABASE mycareerbuild ENCODING 'UTF8';
-
--- Create an application role with a strong password
-CREATE ROLE mycareerbuild_user LOGIN PASSWORD '<generated-strong-password>';
-
--- Grant access
-GRANT ALL PRIVILEGES ON DATABASE mycareerbuild TO mycareerbuild_user;
+# Or manually:
+mysql -u root -p
+CREATE DATABASE mycareerbuild CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'mycareerbuild_user'@'%' IDENTIFIED BY 'secure_password';
+GRANT ALL PRIVILEGES ON mycareerbuild.* TO 'mycareerbuild_user'@'%';
+FLUSH PRIVILEGES;
 ```
 
-### 2. Configure schema ownership
+### Step 2: Migrate Data from SQLite
+
+```bash
+# Migrate existing SQLite data to MySQL
+npm run migrate:mysql
+
+# This will:
+# - Copy all tables and data from SQLite
+# - Convert data types for MySQL compatibility
+# - Create a backup of your SQLite database
+# - Handle JSON fields, dates, and booleans properly
+```
+
+### Step 3: Verify Migration
+
+```bash
+# Test the migration
+mysql -u mycareerbuild_user -p mycareerbuild -e "SELECT COUNT(*) as total_users FROM users;"
+mysql -u mycareerbuild_user -p mycareerbuild -e "SELECT COUNT(*) as total_jobs FROM jobs;"
+```
+
+## 🐳 Docker Deployment
+
+### Development Environment
+
+```bash
+# Start development environment
+npm run docker:dev
+
+# This starts:
+# - MySQL 8.0 database
+# - API server with hot reload
+# - Volume mounts for development
+```
+
+### Production Environment
+
+#### 1. Configure Environment Variables
+
+```bash
+# Copy and edit production environment file
+cp env.example env.production
+
+# Update these critical values:
+NODE_ENV=production
+DB_PASSWORD=your_secure_mysql_password
+JWT_SECRET=your_very_secure_jwt_secret_key
+CORS_ORIGIN=https://yourdomain.com
+```
+
+#### 2. Deploy with Docker Compose
+
+```bash
+# Deploy production stack
+npm run docker:prod
+
+# This starts:
+# - MySQL 8.0 with optimized settings
+# - Redis for caching (optional)
+# - API server with production optimizations
+# - Nginx reverse proxy (optional)
+# - Health checks and auto-restart
+```
+
+#### 3. Monitor Deployment
+
+```bash
+# View logs
+npm run logs
+
+# Check service health
+docker-compose -f docker-compose.prod.yml ps
+
+# Scale services if needed
+docker-compose -f docker-compose.prod.yml up -d --scale api=3
+```
+
+## 🔧 Environment Configuration
+
+### Required Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `NODE_ENV` | Environment mode | `production` |
+| `DB_HOST` | MySQL host | `mysql` or `localhost` |
+| `DB_PORT` | MySQL port | `3306` |
+| `DB_NAME` | Database name | `mycareerbuild` |
+| `DB_USER` | Database user | `mycareerbuild_user` |
+| `DB_PASSWORD` | Database password | `secure_password` |
+| `JWT_SECRET` | JWT signing key | `very_long_random_string` |
+| `PORT` | API server port | `4000` |
+
+### Optional Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DB_APP_PASSWORD` | App-specific DB password | Auto-generated |
+| `REDIS_HOST` | Redis host | `redis` |
+| `REDIS_PORT` | Redis port | `6379` |
+| `LOG_LEVEL` | Logging level | `warn` |
+| `MAX_FILE_SIZE` | Max upload size | `5242880` (5MB) |
+
+## 🔒 Security Best Practices
+
+### 1. Database Security
 
 ```sql
-\c mycareerbuild
-ALTER SCHEMA public OWNER TO mycareerbuild_user;
-GRANT USAGE, CREATE ON SCHEMA public TO mycareerbuild_user;
+-- Remove default MySQL users
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+
+-- Create application-specific user with limited privileges
+CREATE USER 'mycareerbuild_user'@'%' IDENTIFIED BY 'secure_password';
+GRANT SELECT, INSERT, UPDATE, DELETE ON mycareerbuild.* TO 'mycareerbuild_user'@'%';
+
+-- Enable SSL (recommended)
+ALTER USER 'mycareerbuild_user'@'%' REQUIRE SSL;
 ```
 
-### 3. Verify connectivity
+### 2. Application Security
 
 ```bash
-psql "postgres://mycareerbuild_user:<password>@<host>:5432/mycareerbuild" -c "SELECT 1;"
+# Use strong JWT secrets
+JWT_SECRET=$(openssl rand -base64 64)
+
+# Enable HTTPS in production
+CORS_ORIGIN=https://yourdomain.com
+
+# Set secure file permissions
+chmod 600 env.production
+chmod 644 docker-compose.prod.yml
 ```
 
-## 🌱 Application Bootstrap
-
-1. Copy `env.example` to `.env` (or configure secrets in your platform)
-
-```
-NODE_ENV=production
-PORT=4000
-DB_HOST=<postgres-host>
-DB_PORT=5432
-DB_NAME=mycareerbuild
-DB_USER=mycareerbuild_user
-DB_PASSWORD=<password>
-DB_SCHEMA=public
-JWT_SECRET=<64-char-random-string>
-FRONTEND_URL=https://your-frontend.example.com
-```
-
-2. Install dependencies and compile
+### 3. Docker Security
 
 ```bash
-cd mcb-backend
-npm install
-npm run build   # generates dist/ for production
+# Run containers as non-root user
+USER nodejs
+
+# Use specific image tags
+FROM node:20-alpine
+
+# Enable health checks
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3
 ```
 
-3. Run database preparation scripts (optional helper)
+## 📊 Monitoring and Maintenance
+
+### Health Checks
 
 ```bash
-npm run setup:db    # Ensures database/role exist using pg client
+# API health check
+curl http://localhost:4000/health
+
+# Database health check
+docker-compose -f docker-compose.prod.yml exec mysql mysqladmin ping -h localhost
+
+# Redis health check
+docker-compose -f docker-compose.prod.yml exec redis redis-cli ping
 ```
 
-4. Start the service (choose one)
+### Logging
 
 ```bash
-# Development style (ts-node-dev, reloads on changes)
-npm run dev
+# View application logs
+docker-compose -f docker-compose.prod.yml logs -f api
 
-# Production (prebuilt dist/)
-npm run start
+# View database logs
+docker-compose -f docker-compose.prod.yml logs -f mysql
+
+# View all logs
+docker-compose -f docker-compose.prod.yml logs -f
 ```
 
-Use a process manager like PM2, systemd, or a cloud run-time to keep the process alive and restart on failure.
+### Backup and Restore
 
-## 🔧 Environment Reference
+```bash
+# Backup database
+npm run backup:db
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `NODE_ENV` | Run mode | `production` |
-| `PORT` | API port | `4000` |
-| `DB_HOST` | PostgreSQL host | `db.example.com` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_NAME` | Database name | `mycareerbuild` |
-| `DB_USER` | Application role | `mycareerbuild_user` |
-| `DB_PASSWORD` | Role password | _(secret)_ |
-| `DB_SCHEMA` | Schema search path | `public` |
-| `DB_SSL` | `'true'` if TLS required | `true` |
-| `JWT_SECRET` | Token signing key | `random` |
-| `FRONTEND_URL` | Used in notification emails | `https://jobs.example.com` |
+# Restore database
+npm run restore:db
 
-## 🔒 Security Checklist
+# Manual backup
+docker-compose -f docker-compose.prod.yml exec mysql mysqldump -u root -p mycareerbuild > backup.sql
+```
 
-- Enforce TLS between app server and PostgreSQL (`DB_SSL=true`)
-- Restrict inbound firewall rules to the app server IPs
-- Rotate `DB_PASSWORD` and `JWT_SECRET` regularly
-- Disable unused Postgres extensions and default accounts
-- Set `NODE_ENV=production` to leverage secure Express defaults
-- Configure CORS whitelist via `CORS_ORIGIN`
+## 🔄 Updates and Scaling
 
-## 📊 Monitoring & Maintenance
+### Application Updates
 
-| Task | Command |
-|------|---------|
-| API health | `curl http://localhost:4000/health` |
-| DB health | `psql ... -c "SELECT NOW();"` |
-| Logs | `journalctl -u mycareerbuild` (systemd) or `pm2 logs` |
-| Backup | `pg_dump -Fc mycareerbuild > backup.pgcustom` |
-| Restore | `pg_restore -c -d mycareerbuild backup.pgcustom` |
+```bash
+# Pull latest changes
+git pull origin main
 
-## 🚨 Troubleshooting Tips
+# Rebuild and restart
+npm run docker:prod
 
-1. **Cannot connect to PostgreSQL**
-   - Verify `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`
-   - Check firewall rules / security groups
-   - Confirm SSL requirements match server configuration
+# Zero-downtime deployment
+docker-compose -f docker-compose.prod.yml up -d --no-deps api
+```
 
-2. **Migrations or sync issues**
-   - Run `npm run build` to ensure latest models are compiled
-   - Inspect `src/models` changes; Sequelize sync runs automatically on boot
-   - Check server logs for permission errors (schema ownership)
+### Database Updates
 
-3. **Email or S3 integration failures**
-   - Validate AWS and SMTP credentials in the environment
-   - Use `npm run test-email` or `test-s3-upload.js` scripts for diagnostics
+```bash
+# Run migrations
+npm run migrate:mysql
 
-## 📈 Performance Tips
+# Update schema
+docker-compose -f docker-compose.prod.yml exec api npm run build
+```
 
-- Enable PostgreSQL connection pooling (e.g., PgBouncer) for high concurrency
-- Add indexes for frequent lookups (Sequelize migrations in `src/migrations/`)
-- Configure application logging level via `LOG_LEVEL`
-- Run `ANALYZE` and `VACUUM` (autovacuum recommended)
+### Horizontal Scaling
 
-## ✅ Launch Checklist
+```bash
+# Scale API instances
+docker-compose -f docker-compose.prod.yml up -d --scale api=3
 
-- [ ] Secrets and environment variables configured
-- [ ] Database connectivity verified
-- [ ] `npm run build` executed successfully
-- [ ] Process manager configured with auto-restart
-- [ ] Health checks responding with HTTP 200
-- [ ] Backups scheduled via `pg_dump`
+# Use load balancer
+# Configure Nginx or HAProxy for load balancing
+```
 
-Once all boxes are checked, your mycareerbuild backend is serving traffic on PostgreSQL. 🎉
+## 🚨 Troubleshooting
+
+### Common Issues
+
+1. **Database Connection Failed**
+   ```bash
+   # Check MySQL status
+   docker-compose -f docker-compose.prod.yml ps mysql
+   
+   # Check logs
+   docker-compose -f docker-compose.prod.yml logs mysql
+   ```
+
+2. **Migration Errors**
+   ```bash
+   # Check data types
+   mysql -u root -p mycareerbuild -e "DESCRIBE users;"
+   
+   # Verify JSON fields
+   mysql -u root -p mycareerbuild -e "SELECT skills FROM users LIMIT 1;"
+   ```
+
+3. **Performance Issues**
+   ```bash
+   # Check MySQL slow query log
+   docker-compose -f docker-compose.prod.yml exec mysql mysql -e "SHOW VARIABLES LIKE 'slow_query_log';"
+   
+   # Monitor resource usage
+   docker stats
+   ```
+
+### Recovery Procedures
+
+```bash
+# Restart services
+docker-compose -f docker-compose.prod.yml restart
+
+# Reset database (CAUTION: Data loss!)
+docker-compose -f docker-compose.prod.yml down -v
+docker-compose -f docker-compose.prod.yml up -d
+
+# Restore from backup
+docker-compose -f docker-compose.prod.yml exec mysql mysql -u root -p mycareerbuild < backup.sql
+```
+
+## 📈 Performance Optimization
+
+### MySQL Optimization
+
+```sql
+-- Optimize for production workload
+SET GLOBAL innodb_buffer_pool_size = 256M;
+SET GLOBAL max_connections = 200;
+SET GLOBAL query_cache_size = 64M;
+
+-- Add indexes for better performance
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_jobs_company ON jobs(company);
+CREATE INDEX idx_applications_user_id ON applications(userId);
+```
+
+### Application Optimization
+
+```bash
+# Enable compression
+app.use(compression());
+
+# Set cache headers
+app.use(express.static('uploads', { maxAge: '1d' }));
+
+# Use Redis for session storage
+app.use(session({
+  store: new RedisStore({ client: redis }),
+  secret: process.env.SESSION_SECRET
+}));
+```
+
+## 📞 Support
+
+For deployment issues:
+1. Check the logs: `npm run logs`
+2. Verify environment variables
+3. Test database connectivity
+4. Review Docker container status
+
+---
+
+**🎉 Congratulations!** Your mycareerbuild Job Portal is now running on production-grade MySQL infrastructure.

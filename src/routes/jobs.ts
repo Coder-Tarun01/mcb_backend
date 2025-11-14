@@ -1,11 +1,17 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
+import { cached } from '../middleware/cache';
+import { rateLimit } from '../middleware/rateLimiter';
 import { listJobs, getJob, createJob, updateJob, deleteJob, getEmployerJobs, recordApplyClick } from '../controllers/jobs.controller';
 
 const router = Router();
 
 // Public routes (no authentication required)
-router.get('/', listJobs);
+router.get(
+  '/',
+  rateLimit({ limit: 30, windowMs: 10_000 }),
+  cached((req) => `jobs:list:${JSON.stringify(req.query)}`, 10, listJobs)
+);
 
 // Protected routes (authentication required) - specific routes before parameter routes
 router.get('/employer/my-jobs', authenticate, authorize('employer'), getEmployerJobs);

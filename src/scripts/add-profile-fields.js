@@ -2,11 +2,11 @@ const { Sequelize } = require('sequelize');
 
 // Database configuration
 const sequelize = new Sequelize({
-  dialect: 'postgres',
+  dialect: 'mysql',
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'mcb',
-  username: process.env.DB_USER || 'postgres',
+  port: parseInt(process.env.DB_PORT || '3306', 10),
+  database: process.env.DB_NAME || 'mycareerbuild',
+  username: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || 'secret',
   logging: console.log
 });
@@ -34,7 +34,7 @@ async function addProfileFields() {
         await sequelize.query(query);
         console.log(`✅ Executed: ${query}`);
       } catch (error) {
-        if (error.message.includes('already exists')) {
+        if (error.message.includes('Duplicate column name')) {
           console.log(`⚠️  Column already exists: ${query.split(' ')[5]}`);
         } else {
           console.error(`❌ Error executing: ${query}`, error.message);

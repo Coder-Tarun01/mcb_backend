@@ -1,49 +1,61 @@
-# mycareerbuild REST API (Node.js + PostgreSQL)
+# mycareerbuild REST API (Node.js + MySQL + Docker)
 
-TypeScript-based REST API powering the MyCareerBuild platform. Uses Express, Sequelize and PostgreSQL.
+A simple REST API for jobs, users, and candidates. Runs with MySQL using Docker Compose and seeds data from JSON.
 
 ## Prerequisites
-- Node.js 18+
-- PostgreSQL 13+
+- Docker and Docker Compose installed
 
 ## Quick Start
 ```bash
-cd mcb-backend
-cp env.example .env            # adjust credentials for your local PostgreSQL
-npm install
-npm run setup:db               # optional helper to create the database/role
-npm run dev
+cd /Users/nareshkumarterli/Documents/mycareerbuild/latest_2/api
+# Start MySQL and API
+docker compose up -d --build
+
+# API will be available at
+curl http://localhost:4000/health
 ```
-The API listens on `http://localhost:4000` by default. Check `GET /health` for a quick status.
+
+## Endpoints
+- GET `/health` – health check
+- CRUD under `/api/users`, `/api/jobs`, `/api/candidates`
 
 ## Project Structure
-- `src/` – Express app, Sequelize models, routes, services
-- `scripts/` – Node helpers for database setup, maintenance tasks
-- `seed/` – Example JSON data for onboarding
-- `env.example` – Reference environment variables
+- `src/` – TypeScript source (Express, Sequelize models and routes)
+- `seed/` – `users.json`, `jobs.json`, `candidates.json` used for seeding
+- `docker-compose.yml` – MySQL and API services
+- `Dockerfile` – API container
 
 ## Environment
+Create `.env` (already created by setup):
 ```
 PORT=4000
 NODE_ENV=development
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
+DB_HOST=db
+DB_PORT=3306
+DB_USER=root
 DB_PASSWORD=secret
-DB_NAME=mcb
-DB_SCHEMA=public
+DB_NAME=mycareerbuild
+SEED_DIR=seed
 ```
-See `env.example` for the full list.
 
 ## Common Commands
 ```bash
-npm run dev        # start using ts-node-dev
-npm run build      # compile TypeScript to dist/
-npm run start      # run compiled JS from dist/
-npm run setup:db   # create database/role in PostgreSQL
+# Start
+docker compose up -d --build
+# Follow logs
+docker compose logs -f api
+# Stop
+docker compose down
 ```
 
 ## Notes
-- Sequelize `sync()` keeps tables in sync at boot; migrations live in `src/scripts/`.
-- Background schedulers (email, marketing) start automatically when enabled in env vars.
-- Cron-driven notifications rely on valid SMTP and AWS credentials.
+- Tables are auto-created with Sequelize `sync()`.
+- Seed runs automatically in non-production envs at startup.
+- Update JSON in `seed/` and restart to refresh.
+
+## Marketing Email Notifications
+- Module lives under `notifications/marketing` with dedicated README and runbook.
+- Scheduler auto-starts with the API (cron default: every 30 minutes).
+- Manual trigger: `POST /notifications/marketing/trigger` (admin key required).
+- Health endpoint: `GET /notifications/marketing/health` (token header `x-marketing-token`).
+- Configure SMTP and quota settings via the marketing environment variables listed in `env.example`.

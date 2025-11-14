@@ -13,9 +13,9 @@ dotenv.config();
 
 const {
   DB_HOST = 'localhost',
-  DB_PORT = 5432,
-  DB_NAME = 'mcb',
-  DB_USER = 'postgres',
+  DB_PORT = 3306,
+  DB_NAME = 'mycareerbuild',
+  DB_USER = 'root',
   DB_PASSWORD = 'secret',
   NODE_ENV = 'development'
 } = process.env;
@@ -28,12 +28,16 @@ async function createResumesTable() {
   // Connect to the database
   const sequelize = new Sequelize({
     database: DB_NAME,
-    dialect: 'postgres',
+    dialect: 'mysql',
     host: DB_HOST,
     port: DB_PORT,
     username: DB_USER,
     password: DB_PASSWORD,
-    logging: console.log
+    logging: console.log,
+    dialectOptions: {
+      charset: 'utf8mb4',
+      collate: 'utf8mb4_unicode_ci'
+    }
   });
 
   try {
@@ -44,53 +48,34 @@ async function createResumesTable() {
     // Create resumes table
     const createTableQuery = `
       CREATE TABLE IF NOT EXISTS resumes (
-        id UUID PRIMARY KEY,
-        user_id UUID NOT NULL,
+        id VARCHAR(36) PRIMARY KEY,
+        user_id VARCHAR(36) NOT NULL,
         title VARCHAR(255) NOT NULL DEFAULT 'My Resume',
         is_primary BOOLEAN NOT NULL DEFAULT FALSE,
         is_public BOOLEAN NOT NULL DEFAULT FALSE,
-        status TEXT NOT NULL DEFAULT 'draft',
-        personal_info JSONB NOT NULL,
-        work_experience JSONB NOT NULL,
-        education JSONB NOT NULL,
-        skills JSONB NOT NULL,
-        projects JSONB NOT NULL,
-        certifications JSONB NOT NULL,
-        languages JSONB NOT NULL,
-        "references" JSONB NOT NULL,
-        additional_info JSONB NOT NULL,
-        settings JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
+        status ENUM('draft', 'published', 'archived') NOT NULL DEFAULT 'draft',
+        personal_info JSON NOT NULL,
+        work_experience JSON NOT NULL,
+        education JSON NOT NULL,
+        skills JSON NOT NULL,
+        projects JSON NOT NULL,
+        certifications JSON NOT NULL,
+        languages JSON NOT NULL,
+        \`references\` JSON NOT NULL,
+        additional_info JSON NOT NULL,
+        settings JSON NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_user_id (user_id),
+        INDEX idx_is_primary (is_primary),
+        INDEX idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `;
-
-    const statusConstraint = `
-      ALTER TABLE resumes
-      ADD CONSTRAINT resumes_status_check
-      CHECK (status IN ('draft', 'published', 'archived'))
-      NOT VALID;
-    `;
-
-    const makeConstraintValid = `
-      ALTER TABLE resumes
-      VALIDATE CONSTRAINT resumes_status_check;
-    `;
-
-    const indexQueries = [
-      'CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON resumes (user_id)',
-      'CREATE INDEX IF NOT EXISTS idx_resumes_is_primary ON resumes (is_primary)',
-      'CREATE INDEX IF NOT EXISTS idx_resumes_status ON resumes (status)'
-    ];
 
     await sequelize.query(createTableQuery);
-    await sequelize.query(statusConstraint).catch(() => {});
-    await sequelize.query(makeConstraintValid).catch(() => {});
-    for (const indexQuery of indexQueries) {
-      await sequelize.query(indexQuery);
-    }
     console.log('✅ Resumes table created successfully');
 
+    // Close connection
     await sequelize.close();
     console.log('✅ Database operation completed successfully');
 

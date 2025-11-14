@@ -7,17 +7,20 @@ function sleep(ms) {
 }
 
 function createTransporter(smtpConfig) {
-  if (!smtpConfig || !smtpConfig.host) {
+  if (!smtpConfig) {
     throw new Error('SMTP configuration is incomplete for marketing email service');
   }
 
-  const port = Number.isFinite(smtpConfig.port) ? smtpConfig.port : 587;
+  const host = smtpConfig.host || process.env.EMAIL_HOST || 'smtp.gmail.com';
+  const port = Number.isFinite(smtpConfig.port) ? smtpConfig.port : 465;
+  const secure = typeof smtpConfig.secure === 'boolean' ? smtpConfig.secure : port === 465;
+  const requireTLS = typeof smtpConfig.requireTLS === 'boolean' ? smtpConfig.requireTLS : port !== 465;
 
   return nodemailer.createTransport({
-    host: smtpConfig.host,
+    host,
     port,
-    secure: Boolean(smtpConfig.secure),
-    requireTLS: Boolean(smtpConfig.requireTLS),
+    secure,
+    requireTLS,
     auth:
       smtpConfig.user && smtpConfig.pass
         ? {
@@ -31,7 +34,7 @@ function createTransporter(smtpConfig) {
   });
 }
 
-function createEmailService({ config, transporter = null } = {}) {
+function createEmailService({ config, transporter = null, digestLogRepository = null } = {}) {
   if (!config) {
     throw new Error('Config is required to create marketing email service');
   }
@@ -49,7 +52,7 @@ function createEmailService({ config, transporter = null } = {}) {
     return internalTransporter;
   }
 
-  async function sendDigestEmails({ contacts, jobs, batchId }) {
+  async function sendDigestEmails({ contacts, jobs, jobsByContact, batchId }) {
     if (!Array.isArray(contacts) || contacts.length === 0) {
       return {
         attempted: 0,
@@ -62,6 +65,14 @@ function createEmailService({ config, transporter = null } = {}) {
 
     const transporterInstance = ensureTransporter();
     const batches = chunkArray(contacts, config.batchSize);
+    const jobsMap = jobsByContact instanceof Map ? jobsByContact : null;
+
+    const resolveJobsForContact = (contact) => {
+      if (jobsMap && jobsMap.has(contact.id)) {
+        return jobsMap.get(contact.id) || [];
+      }
+      return Array.isArray(jobs) ? jobs : [];
+    };
 
     const summary = {
       attempted: 0,
@@ -76,11 +87,12 @@ function createEmailService({ config, transporter = null } = {}) {
       const batchLabel = `${batchId}-b${batchIndex + 1}`;
       const batchResults = await processBatch({
         batch,
-        jobs,
+        resolveJobsForContact,
         transporter: transporterInstance,
         batchId: batchLabel,
         config,
         mailFrom,
+        digestLogRepository,
       });
 
       for (const result of batchResults) {
@@ -108,7 +120,7 @@ function createEmailService({ config, transporter = null } = {}) {
   };
 }
 
-async function processBatch({ batch, jobs, transporter, batchId, config, mailFrom }) {
+async function processBatch({ batch, resolveJobsForContact, transporter, batchId, config, mailFrom, digestLogRepository }) {
   const results = [];
   const queue = [...batch];
   let active = 0;
@@ -125,15 +137,36 @@ async function processBatch({ batch, jobs, transporter, batchId, config, mailFro
       }
 
       const contact = queue.shift();
+      const jobsForContact = resolveJobsForContact(contact);
+
+      if (!Array.isArray(jobsForContact) || jobsForContact.length === 0) {
+        if (digestLogRepository) {
+          digestLogRepository
+            .record({ email: contact.email, jobs: [], status: 'FAILED', error: 'No jobs available for contact' })
+            .catch(() => {});
+        }
+        results.push({
+          ok: false,
+          contactId: contact.id,
+          contact: contact.email,
+          attempts: 0,
+          error: 'No jobs available for contact',
+          batchId,
+        });
+        next();
+        return;
+      }
+
       active += 1;
 
-      sendWithRetry({ contact, jobs, transporter, batchId, config, mailFrom })
+      sendWithRetry({ contact, jobs: jobsForContact, transporter, batchId, config, mailFrom, digestLogRepository })
         .then((result) => {
           results.push(result);
         })
         .catch((error) => {
           results.push({
             ok: false,
+            contactId: contact.id,
             contact: contact.email,
             attempts: config.maxRetries + 1,
             error: error.message,
@@ -154,7 +187,11 @@ async function processBatch({ batch, jobs, transporter, batchId, config, mailFro
   });
 }
 
-async function sendWithRetry({ contact, jobs, transporter, batchId, config, mailFrom }) {
+async function sendWithRetry({ contact, jobs, transporter, batchId, config, mailFrom, digestLogRepository }) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    throw new Error('No jobs selected for contact');
+  }
+
   const jobIds = jobs.map((job) => job.id);
   const payloadBase = {
     recipient: contact.email,
@@ -199,8 +236,15 @@ async function sendWithRetry({ contact, jobs, transporter, batchId, config, mail
         dryRun: config.dryRun,
       });
 
+      if (digestLogRepository) {
+        digestLogRepository
+          .record({ email: contact.email, jobs, status: 'SUCCESS' })
+          .catch(() => {});
+      }
+
       return {
         ok: true,
+        contactId: contact.id,
         contact: contact.email,
         attempts: attempt + 1,
         batchId,
@@ -215,8 +259,14 @@ async function sendWithRetry({ contact, jobs, transporter, batchId, config, mail
       });
 
       if (attempt >= config.maxRetries) {
+        if (digestLogRepository) {
+          digestLogRepository
+            .record({ email: contact.email, jobs, status: 'FAILED', error: lastError.message })
+            .catch(() => {});
+        }
         return {
           ok: false,
+          contactId: contact.id,
           contact: contact.email,
           attempts: attempt + 1,
           error: lastError.message,
@@ -231,8 +281,16 @@ async function sendWithRetry({ contact, jobs, transporter, batchId, config, mail
     }
   }
 
+  if (digestLogRepository) {
+    const message = lastError ? lastError.message : 'Unknown error';
+    digestLogRepository
+      .record({ email: contact.email, jobs, status: 'FAILED', error: message })
+      .catch(() => {});
+  }
+
   return {
     ok: false,
+    contactId: contact.id,
     contact: contact.email,
     attempts: attempt,
     error: lastError ? lastError.message : 'Unknown error',

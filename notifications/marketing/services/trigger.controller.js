@@ -9,16 +9,42 @@ function createTriggerController({ orchestrator, jobsRepository, logger, config 
       const force = parseBoolean(payload.force, false);
       const limit = payload.limit ? Number(payload.limit) : undefined;
 
-      const summary = await orchestrator.run({
-        source: 'manual-trigger',
-        force,
-        limit,
-      });
+      const runPromise = orchestrator
+        .run({
+          source: 'manual-trigger',
+          force,
+          limit,
+        })
+        .then((summary) => {
+          logger?.logSuccess?.({
+            status: 'COMPLETED',
+            source: 'manual-trigger',
+            batchId: summary?.batchId,
+            jobsQueried: summary?.jobsQueried,
+            contactsSucceeded: summary?.contactsSucceeded,
+            contactsFailed: summary?.contactsFailed,
+          });
+          return summary;
+        })
+        .catch((error) => {
+          console.error('Marketing digest run failed', error);
+          logger?.logFailure?.({
+            status: 'FAILED',
+            source: 'manual-trigger',
+            error: error?.message ?? 'Unknown error',
+          });
+        });
 
-      res.json({
+      res.status(202).json({
         success: true,
-        data: summary,
+        message: 'Marketing digest run started',
+        data: {
+          queued: true,
+          force,
+          limit,
+        },
       });
+      void runPromise;
     } catch (error) {
       res.status(500).json({
         success: false,
@@ -55,6 +81,7 @@ function createTriggerController({ orchestrator, jobsRepository, logger, config 
         },
       });
     } catch (error) {
+      console.error('Marketing notifications health check failed', error);
       res.status(500).json({
         success: false,
         error: error?.message || 'Marketing notifications health check failed',

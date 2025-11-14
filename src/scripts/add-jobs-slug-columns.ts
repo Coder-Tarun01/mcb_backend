@@ -6,34 +6,34 @@ async function run() {
 
     const [slugExistsRows]: any = await sequelize.query(
       `SELECT COUNT(*) as count
-       FROM information_schema.columns
-       WHERE table_schema = current_schema()
-         AND table_name = 'jobs'
-         AND column_name = 'slug'`
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'jobs'
+         AND COLUMN_NAME = 'slug'`
     );
     const slugExists = Number(slugExistsRows?.[0]?.count || 0) > 0;
 
     if (!slugExists) {
       console.log('Adding column jobs.slug ...');
-      await sequelize.query(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS "slug" VARCHAR(255)`);
-      await sequelize.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_slug ON jobs ("slug")`);
+      await sequelize.query(`ALTER TABLE jobs ADD COLUMN slug VARCHAR(255) NULL`);
+      await sequelize.query(`CREATE UNIQUE INDEX idx_jobs_slug ON jobs (slug)`);
     } else {
       console.log('Column jobs.slug already exists.');
     }
 
     const [prevSlugsExistsRows]: any = await sequelize.query(
       `SELECT COUNT(*) as count
-       FROM information_schema.columns
-       WHERE table_schema = current_schema()
-         AND table_name = 'jobs'
-         AND column_name = 'previousSlugs'`
+       FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'jobs'
+         AND COLUMN_NAME = 'previousSlugs'`
     );
     const prevSlugsExists = Number(prevSlugsExistsRows?.[0]?.count || 0) > 0;
 
     if (!prevSlugsExists) {
       console.log('Adding column jobs.previousSlugs ...');
       // Use JSON if available; fallback to TEXT if needed by editing this script
-      await sequelize.query(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS "previousSlugs" JSONB`);
+      await sequelize.query(`ALTER TABLE jobs ADD COLUMN previousSlugs JSON NULL`);
     } else {
       console.log('Column jobs.previousSlugs already exists.');
     }

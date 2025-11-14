@@ -5,6 +5,9 @@ import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { QueryTypes } from 'sequelize';
 import { authenticate } from '../middleware/auth';
+import { cached, purgeCache } from '../middleware/cache';
+import { rateLimit } from '../middleware/rateLimiter';
+import { getFresherJobs, readNotificationLogs } from '../services/notificationQueries';
 import {
   getNotifications,
   markAsRead,
@@ -45,6 +48,7 @@ interface CsvUserRow {
   mobile?: string;
   branch?: string;
   experience?: string;
+  telegramChatId?: string | null;
 }
 
 interface UploadSummary {
@@ -68,6 +72,7 @@ interface MarketingContactPayload {
   mobileNo: string | null;
   branch: string | null;
   experience: string | null;
+  telegramChatId: string | null;
 }
 
 interface MarketingContactResponse {
@@ -77,6 +82,7 @@ interface MarketingContactResponse {
   mobileNo: string | null;
   branch: string | null;
   experience: string | null;
+  telegramChatId: string | null;
   createdAt: string;
 }
 
@@ -145,59 +151,22 @@ function normalizeCsvRow(row: Record<string, unknown>, index: number): CsvUserRo
     normalizedEntries['exp'] ||
     '';
 
+  const telegramChatIdValue =
+    normalizedEntries.telegram ||
+    normalizedEntries['telegram chat id'] ||
+    normalizedEntries['telegram_chat_id'] ||
+    normalizedEntries['telegram id'] ||
+    normalizedEntries['telegram_chatid'] ||
+    '';
+
   return {
     name: nameValue.trim(),
     email: emailValue.trim(),
     mobile: mobileValue.trim(),
     branch: branchValue.trim(),
     experience: experienceValue.trim(),
+    telegramChatId: telegramChatIdValue.trim(),
   };
-}
-
-async function readLogFile(filePath: string, limit: number): Promise<LogEntry[]> {
-  try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    const lines = raw
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-
-    const limitedLines = limit > 0 ? lines.slice(-limit) : lines;
-
-    return limitedLines.map((line) => {
-      const match = line.match(/^\[(.+?)\]\s+(\w+)(?:\s*\|\s*(.*))?$/);
-      if (!match) {
-        return {
-          timestamp: null,
-          status: 'UNKNOWN',
-          raw: line,
-        };
-      }
-
-      const [, timestamp, status, metaString] = match;
-      let meta: LogEntry['meta'];
-      if (metaString) {
-        const trimmedMeta = metaString.trim();
-        try {
-          meta = JSON.parse(trimmedMeta);
-        } catch (err) {
-          meta = trimmedMeta;
-        }
-      }
-
-      return {
-        timestamp: timestamp ?? null,
-        status: status ?? 'UNKNOWN',
-        meta,
-        raw: line,
-      };
-    });
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
 }
 
 async function ensureLogDirectory(): Promise<void> {
@@ -246,77 +215,46 @@ function requireAdminKey(req: Request, res: Response, next: NextFunction): void 
   res.status(401).json({ success: false, error: 'Invalid or missing admin key' });
 }
 
-router.get('/jobs/freshers', requireAdminKey, async (req: Request, res: Response) => {
-  try {
-    const includeNotified = parseBoolean(req.query.includeNotified ?? req.query.include_notified, false);
-    const limitParam = req.query.limit;
-    let limit = 0;
-    if (typeof limitParam === 'string') {
-      const parsed = Number.parseInt(limitParam, 10);
-      if (!Number.isNaN(parsed) && parsed >= 0) {
-        limit = Math.min(parsed, 500);
+router.get(
+  '/jobs/freshers',
+  requireAdminKey,
+  rateLimit({
+    limit: 20,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/jobs/freshers exceeded by ${req.ip}`);
+    },
+  }),
+  cached(
+    (req) =>
+      `notifications:jobs:freshers:${String(req.query.includeNotified ?? req.query.include_notified ?? 'false')}:${String(
+        req.query.limit ?? 'default'
+      )}`,
+    10,
+    async (req: Request, res: Response) => {
+      const includeNotified = parseBoolean(req.query.includeNotified ?? req.query.include_notified, false);
+      const limitParam = req.query.limit;
+      let limit = 0;
+      if (typeof limitParam === 'string') {
+        const parsed = Number.parseInt(limitParam, 10);
+        if (!Number.isNaN(parsed) && parsed >= 0) {
+          limit = Math.min(parsed, 500);
+        }
       }
+
+      const { jobs, stats } = await getFresherJobs({ includeNotified, limit });
+
+      res.json({
+        success: true,
+        message: 'Fresher jobs retrieved',
+        data: {
+          jobs,
+          stats,
+        },
+      });
     }
-
-    const sequelizeInstance =
-      jobFetcher && typeof jobFetcher.getSequelize === 'function' ? jobFetcher.getSequelize() : sequelize;
-
-    const replacements: Record<string, unknown> = {};
-    let query =
-      "SELECT id, title, company, location, " +
-      "COALESCE(experienceLevel, '') AS experience, " +
-      "type AS jobType, COALESCE(applyUrl, '') AS link, notify_sent AS notifySent, createdAt AS createdAt " +
-      "FROM jobs WHERE type = 'Fresher'";
-
-    if (!includeNotified) {
-      query += ' AND notify_sent = 0';
-    }
-
-    query += ' ORDER BY createdAt DESC';
-
-    if (limit > 0) {
-      query += ' LIMIT :limit';
-      replacements.limit = limit;
-    }
-
-    const jobs = await sequelizeInstance.query(query, {
-      replacements,
-      type: QueryTypes.SELECT,
-    });
-
-    const statsRows = (await sequelizeInstance.query(
-      "SELECT COUNT(*) AS total, SUM(CASE WHEN notify_sent = 0 THEN 1 ELSE 0 END) AS pending " +
-        "FROM jobs WHERE type = 'Fresher'",
-      {
-        type: QueryTypes.SELECT,
-      }
-    )) as Array<{ total: number; pending: number | null }>;
-
-    const statsRow = statsRows[0] || { total: 0, pending: 0 };
-    const pending = Number(statsRow.pending ?? 0);
-    const total = Number(statsRow.total ?? 0);
-    const stats = {
-      total,
-      pending,
-      notified: Math.max(total - pending, 0),
-    };
-
-    res.json({
-      success: true,
-      message: 'Fresher jobs retrieved',
-      data: {
-        jobs,
-        stats,
-      },
-    });
-  } catch (error: any) {
-    console.error('Failed to fetch fresher jobs', error);
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to fetch fresher jobs',
-    });
-  }
-});
+  )
+);
 
 router.post(
   '/upload-csv',
@@ -373,10 +311,11 @@ router.post(
           const mobile = row.mobile?.trim() || null;
           const branch = row.branch?.trim() || null;
           const experience = row.experience?.trim() || null;
+          const telegramChatId = row.telegramChatId?.trim() || null;
 
           try {
             const existingContactRows = await sequelize.query(
-              `SELECT id, full_name, mobile_no, branch, experience
+              `SELECT id, full_name, mobile_no, branch, experience, telegram_chat_id
                FROM marketing_contacts
                WHERE email = :email
                LIMIT 1`,
@@ -394,13 +333,15 @@ router.post(
                 mobile_no?: string | null;
                 branch?: string | null;
                 experience?: string | null;
+                telegram_chat_id?: string | null;
               };
 
               const shouldUpdate =
                 (existingContact.full_name || '') !== name ||
                 (existingContact.mobile_no || '') !== (mobile || '') ||
                 (existingContact.branch || '') !== (branch || '') ||
-                (existingContact.experience || '') !== (experience || '');
+                (existingContact.experience || '') !== (experience || '') ||
+                (existingContact.telegram_chat_id || '') !== (telegramChatId || '');
 
               if (shouldUpdate) {
                 await sequelize.query(
@@ -408,7 +349,8 @@ router.post(
                    SET full_name = :fullName,
                        mobile_no = :mobileNo,
                        branch = :branch,
-                       experience = :experience
+                       experience = :experience,
+                       telegram_chat_id = :telegramChatId
                    WHERE id = :id`,
                   {
                     replacements: {
@@ -417,6 +359,7 @@ router.post(
                       mobileNo: mobile,
                       branch,
                       experience,
+                      telegramChatId,
                     },
                     type: QueryTypes.UPDATE,
                     transaction,
@@ -430,8 +373,8 @@ router.post(
             }
 
             await sequelize.query(
-              `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, created_at)
-               VALUES (:fullName, :email, :mobileNo, :branch, :experience, NOW())`,
+              `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at)
+               VALUES (:fullName, :email, :mobileNo, :branch, :experience, :telegramChatId, NOW())`,
               {
                 replacements: {
                   fullName: name,
@@ -439,6 +382,7 @@ router.post(
                   mobileNo: mobile,
                   branch,
                   experience,
+                  telegramChatId,
                 },
                 type: QueryTypes.INSERT,
                 transaction,
@@ -452,6 +396,9 @@ router.post(
           }
         }
       });
+
+      purgeCache('notifications:marketing:contacts*');
+      purgeCache('notifications:marketing:health');
 
       res.json({
         success: true,
@@ -486,136 +433,190 @@ router.get('/send-mails', requireAdminKey, async (_req: Request, res: Response) 
   }
 });
 
-router.get('/logs', requireAdminKey, async (req: Request, res: Response) => {
-  try {
-    await ensureLogDirectory();
-
-    const limitParam = req.query.limit;
-    let limit = 50;
-    if (typeof limitParam === 'string') {
-      const parsed = Number.parseInt(limitParam, 10);
-      if (!Number.isNaN(parsed) && parsed >= 0) {
-        limit = Math.min(parsed, 500);
+router.get(
+  '/logs',
+  requireAdminKey,
+  rateLimit({
+    limit: 15,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/logs exceeded by ${req.ip}`);
+    },
+  }),
+  cached((req) => `notifications:logs:${String(req.query.limit ?? 'default')}`, 10, async (req: Request, res: Response) => {
+    try {
+      const limitParam = req.query.limit;
+      let limit = 50;
+      if (typeof limitParam === 'string') {
+        const parsed = Number.parseInt(limitParam, 10);
+        if (!Number.isNaN(parsed) && parsed >= 0) {
+          limit = Math.min(parsed, 500);
+        }
       }
-    }
 
-    const [successLogs, failedLogs] = await Promise.all([
-      readLogFile(SUCCESS_LOG, limit),
-      readLogFile(FAILED_LOG, limit),
-    ]);
+      await ensureLogDirectory();
+      const { success, failed } = await readNotificationLogs(limit);
 
-    res.json({
-      success: true,
-      message: 'Notification logs retrieved',
-      data: {
-        success: successLogs,
-        failed: failedLogs,
-      },
-    });
-  } catch (error: any) {
-    console.error('Failed to load notification logs', error);
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to load notification logs',
-    });
-  }
-});
-
-router.get('/marketing/health', async (req: Request, res: Response) => {
-  if (!marketingController || typeof marketingController.health !== 'function') {
-    res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
-    return;
-  }
-
-  await marketingController.health(req, res);
-});
-
-router.post('/marketing/trigger', requireAdminKey, async (req: Request, res: Response) => {
-  if (!marketingController || typeof marketingController.trigger !== 'function') {
-    res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
-    return;
-  }
-
-  await marketingController.trigger(req, res);
-});
-
-router.get('/marketing/contacts', requireAdminKey, async (req: Request, res: Response) => {
-  try {
-    const pageParam = Number.parseInt(String(req.query.page ?? '1'), 10);
-    const targetPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-
-    const pageSizeParam = Number.parseInt(String(req.query.pageSize ?? MARKETING_CONTACTS_DEFAULT_PAGE_SIZE), 10);
-    const pageSize = Math.max(1, Math.min(Number.isFinite(pageSizeParam) ? pageSizeParam : MARKETING_CONTACTS_DEFAULT_PAGE_SIZE, 100));
-
-    const searchRaw = typeof req.query.search === 'string' ? req.query.search.trim() : '';
-    const searchValue = searchRaw.length > 0 ? `%${searchRaw.toLowerCase()}%` : null;
-
-    const sortByParam = typeof req.query.sortBy === 'string' ? req.query.sortBy.toLowerCase() : 'created_at';
-    const sortDirectionParam = typeof req.query.sortDirection === 'string' ? req.query.sortDirection.toUpperCase() : 'DESC';
-    const allowedSortColumns: Record<string, string> = {
-      created_at: 'created_at',
-      full_name: 'full_name',
-      email: 'email',
-    };
-    const sortColumn = allowedSortColumns[sortByParam] || 'created_at';
-    const sortDirection = sortDirectionParam === 'ASC' ? 'ASC' : 'DESC';
-
-    const whereClause = searchValue
-      ? 'WHERE LOWER(full_name) LIKE :search OR LOWER(email) LIKE :search OR LOWER(branch) LIKE :search OR LOWER(experience) LIKE :search'
-      : '';
-
-    const replacements: Record<string, unknown> = {
-      limit: pageSize,
-      offset: (targetPage - 1) * pageSize,
-    };
-    if (searchValue) {
-      replacements.search = searchValue;
-    }
-
-    const contactRowsPromise = sequelize.query(
-      `SELECT id, full_name, email, mobile_no, branch, experience, created_at
-       FROM marketing_contacts
-       ${whereClause}
-       ORDER BY ${sortColumn} ${sortDirection}
-       LIMIT :limit OFFSET :offset`,
-      {
-        replacements,
-        type: QueryTypes.SELECT,
-      }
-    );
-
-    const countRowsPromise = sequelize.query(
-      `SELECT COUNT(*) AS total FROM marketing_contacts ${whereClause}`,
-      {
-        replacements: searchValue ? { search: searchValue } : undefined,
-        type: QueryTypes.SELECT,
-      }
-    );
-
-    const [contactRows, countRows] = await Promise.all([contactRowsPromise, countRowsPromise]);
-
-    const total = Number((countRows[0] as any)?.total ?? 0);
-    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-
-    res.json({
-      success: true,
-      data: {
-        contacts: contactRows.map(mapMarketingContactRow),
-        pagination: {
-          page: targetPage,
-          pageSize,
-          total,
-          totalPages,
-          hasNextPage: totalPages > 0 && targetPage < totalPages,
-          hasPrevPage: targetPage > 1,
+      res.json({
+        success: true,
+        data: {
+          success,
+          failed,
         },
-      },
-    });
-  } catch (error) {
-    console.error('Failed to load marketing contacts', error);
-    res.status(500).json({ success: false, error: 'Failed to load marketing contacts' });
+      });
+    } catch (error: any) {
+      console.error('Failed to load notification logs', error);
+      res.status(500).json({
+        success: false,
+        error: error?.message || 'Failed to load notification logs',
+      });
+    }
+  })
+);
+
+router.get(
+  '/marketing/health',
+  rateLimit({
+    limit: 20,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/marketing/health exceeded by ${req.ip}`);
+    },
+  }),
+  cached('notifications:marketing:health', 10, async (req: Request, res: Response) => {
+    if (!marketingController || typeof marketingController.health !== 'function') {
+      res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
+      return;
+    }
+
+    await marketingController.health(req, res);
+  })
+);
+
+router.post(
+  '/marketing/trigger',
+  requireAdminKey,
+  rateLimit({
+    limit: 10,
+    windowMs: 60_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/marketing/trigger exceeded by ${req.ip}`);
+    },
+  }),
+  async (req: Request, res: Response) => {
+    if (!marketingController || typeof marketingController.trigger !== 'function') {
+      res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
+      return;
+    }
+
+    await marketingController.trigger(req, res);
+    purgeCache('notifications:jobs:freshers*');
+    purgeCache('notifications:marketing:health');
   }
-});
+);
+
+router.get(
+  '/marketing/contacts',
+  requireAdminKey,
+  rateLimit({
+    limit: 20,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/marketing/contacts exceeded by ${req.ip}`);
+    },
+  }),
+  cached(
+    (req) =>
+      `notifications:marketing:contacts:${JSON.stringify({
+        page: req.query.page,
+        pageSize: req.query.pageSize,
+        search: req.query.search,
+        sortBy: req.query.sortBy,
+        sortDirection: req.query.sortDirection,
+      })}`,
+    10,
+    async (req: Request, res: Response) => {
+      try {
+        const pageParam = Number.parseInt(String(req.query.page ?? '1'), 10);
+        const targetPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+
+        const pageSizeParam = Number.parseInt(String(req.query.pageSize ?? MARKETING_CONTACTS_DEFAULT_PAGE_SIZE), 10);
+        const pageSize = Math.max(
+          1,
+          Math.min(Number.isFinite(pageSizeParam) ? pageSizeParam : MARKETING_CONTACTS_DEFAULT_PAGE_SIZE, 100)
+        );
+
+        const searchRaw = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+        const searchValue = searchRaw.length > 0 ? `%${searchRaw.toLowerCase()}%` : null;
+
+        const sortByParam = typeof req.query.sortBy === 'string' ? req.query.sortBy.toLowerCase() : 'created_at';
+        const sortDirectionParam = typeof req.query.sortDirection === 'string' ? req.query.sortDirection.toUpperCase() : 'DESC';
+        const allowedSortColumns: Record<string, string> = {
+          created_at: 'created_at',
+          full_name: 'full_name',
+          email: 'email',
+        };
+        const sortColumn = allowedSortColumns[sortByParam] || 'created_at';
+        const sortDirection = sortDirectionParam === 'ASC' ? 'ASC' : 'DESC';
+
+        const whereClause = searchValue
+          ? 'WHERE LOWER(full_name) LIKE :search OR LOWER(email) LIKE :search OR LOWER(branch) LIKE :search OR LOWER(experience) LIKE :search'
+          : '';
+
+        const replacements: Record<string, unknown> = {
+          limit: pageSize,
+          offset: (targetPage - 1) * pageSize,
+        };
+        if (searchValue) {
+          replacements.search = searchValue;
+        }
+
+        const contactRowsPromise = sequelize.query(
+          `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
+           FROM marketing_contacts
+           ${whereClause}
+           ORDER BY ${sortColumn} ${sortDirection}
+           LIMIT :limit OFFSET :offset`,
+          {
+            replacements,
+            type: QueryTypes.SELECT,
+          }
+        );
+
+        const countRowsPromise = sequelize.query(
+          `SELECT COUNT(*) AS total FROM marketing_contacts ${whereClause}`,
+          {
+            replacements: searchValue ? { search: searchValue } : undefined,
+            type: QueryTypes.SELECT,
+          }
+        );
+
+        const [contactRows, countRows] = await Promise.all([contactRowsPromise, countRowsPromise]);
+
+        const total = Number((countRows[0] as any)?.total ?? 0);
+        const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+
+        res.json({
+          success: true,
+          data: {
+            contacts: contactRows.map(mapMarketingContactRow),
+            pagination: {
+              page: targetPage,
+              pageSize,
+              total,
+              totalPages,
+              hasNextPage: totalPages > 0 && targetPage < totalPages,
+              hasPrevPage: targetPage > 1,
+            },
+          },
+        });
+      } catch (error) {
+        console.error('Failed to load marketing contacts', error);
+        res.status(500).json({ success: false, error: 'Failed to load marketing contacts' });
+      }
+    }
+  )
+);
 
 router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Response) => {
   try {
@@ -643,30 +644,30 @@ router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Re
       return;
     }
 
-    const replacements = {
-      fullName: payload.fullName,
-      email: payload.email,
-      mobileNo: payload.mobileNo,
-      branch: payload.branch,
-      experience: payload.experience,
-    };
+    const { fullName, email, mobileNo, branch, experience, telegramChatId } = payload;
 
-    const [insertRows] = await sequelize.query(
-      `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, created_at)
-       VALUES (:fullName, :email, :mobileNo, :branch, :experience, NOW())
-       RETURNING id`,
+    const [insertResult] = await sequelize.query(
+      `INSERT INTO marketing_contacts (full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at)
+       VALUES (:fullName, :email, :mobileNo, :branch, :experience, :telegramChatId, NOW())`,
       {
-        replacements,
-        type: QueryTypes.SELECT,
+        replacements: {
+          fullName,
+          email,
+          mobileNo,
+          branch,
+          experience,
+          telegramChatId,
+        },
+        type: QueryTypes.INSERT,
       }
     );
 
-    const insertedId = Array.isArray(insertRows) ? (insertRows[0] as any)?.id : (insertRows as any)?.id;
-    let contact = insertedId ? await loadMarketingContactById(Number(insertedId)) : null;
+    const insertedId = (insertResult as any)?.insertId;
+    let contact = await loadMarketingContactById(insertedId);
 
     if (!contact) {
       const fallbackRows = await sequelize.query(
-        `SELECT id, full_name, email, mobile_no, branch, experience, created_at
+        `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
          FROM marketing_contacts
          WHERE email = :email
          ORDER BY id DESC
@@ -686,6 +687,8 @@ router.post('/marketing/contacts', requireAdminKey, async (req: Request, res: Re
       message: 'Marketing contact created',
       data: contact,
     });
+    purgeCache('notifications:marketing:contacts*');
+    purgeCache('notifications:marketing:health');
   } catch (error) {
     console.error('Failed to create marketing contact', error);
     res.status(500).json({ success: false, error: 'Failed to create marketing contact' });
@@ -696,7 +699,7 @@ router.put('/marketing/contacts/:id', requireAdminKey, async (req: Request, res:
   try {
     const idParam = req.params.id;
     if (!idParam) {
-      res.status(400).json({ success: false, error: 'Missing contact id' });
+      res.status(400).json({ success: false, error: 'Contact id is required' });
       return;
     }
 
@@ -741,7 +744,8 @@ router.put('/marketing/contacts/:id', requireAdminKey, async (req: Request, res:
            email = :email,
            mobile_no = :mobileNo,
            branch = :branch,
-           experience = :experience
+           experience = :experience,
+           telegram_chat_id = :telegramChatId
        WHERE id = :id`,
       {
         replacements: {
@@ -750,6 +754,7 @@ router.put('/marketing/contacts/:id', requireAdminKey, async (req: Request, res:
           mobileNo: payload.mobileNo,
           branch: payload.branch,
           experience: payload.experience,
+          telegramChatId: payload.telegramChatId,
           id,
         },
         type: QueryTypes.UPDATE,
@@ -762,6 +767,8 @@ router.put('/marketing/contacts/:id', requireAdminKey, async (req: Request, res:
       message: 'Marketing contact updated',
       data: updated,
     });
+    purgeCache('notifications:marketing:contacts*');
+    purgeCache('notifications:marketing:health');
   } catch (error) {
     console.error('Failed to update marketing contact', error);
     res.status(500).json({ success: false, error: 'Failed to update marketing contact' });
@@ -772,7 +779,7 @@ router.delete('/marketing/contacts/:id', requireAdminKey, async (req: Request, r
   try {
     const idParam = req.params.id;
     if (!idParam) {
-      res.status(400).json({ success: false, error: 'Missing contact id' });
+      res.status(400).json({ success: false, error: 'Contact id is required' });
       return;
     }
 
@@ -801,6 +808,8 @@ router.delete('/marketing/contacts/:id', requireAdminKey, async (req: Request, r
       message: 'Marketing contact deleted',
       data: { id },
     });
+    purgeCache('notifications:marketing:contacts*');
+    purgeCache('notifications:marketing:health');
   } catch (error) {
     console.error('Failed to delete marketing contact', error);
     res.status(500).json({ success: false, error: 'Failed to delete marketing contact' });
@@ -845,6 +854,7 @@ router.get('/subscribers', requireAdminKey, async (req: Request, res: Response) 
          s.mobile_no,
          s.branch,
          s.experience,
+         s.telegram_chat_id,
          s.created_at
        FROM marketing_contacts s
        ${whereClause}
@@ -904,6 +914,12 @@ function normalizeMarketingContactPayload(body: any): MarketingContactPayload {
   const mobileNoRaw = typeof body?.mobileNo === 'string' ? body.mobileNo.trim() : '';
   const branchRaw = typeof body?.branch === 'string' ? body.branch.trim() : '';
   const experienceRaw = typeof body?.experience === 'string' ? body.experience.trim() : '';
+  const telegramChatIdRawCandidate =
+    typeof body?.telegramChatId === 'string'
+      ? body.telegramChatId.trim()
+      : typeof body?.telegram_chat_id === 'string'
+      ? body.telegram_chat_id.trim()
+      : '';
 
   return {
     fullName,
@@ -911,6 +927,7 @@ function normalizeMarketingContactPayload(body: any): MarketingContactPayload {
     mobileNo: mobileNoRaw.length > 0 ? mobileNoRaw : null,
     branch: branchRaw.length > 0 ? branchRaw : null,
     experience: experienceRaw.length > 0 ? experienceRaw : null,
+    telegramChatId: telegramChatIdRawCandidate.length > 0 ? telegramChatIdRawCandidate : null,
   };
 }
 
@@ -922,6 +939,7 @@ function mapMarketingContactRow(row: any): MarketingContactResponse {
     mobileNo: row.mobile_no ?? null,
     branch: row.branch ?? null,
     experience: row.experience ?? null,
+     telegramChatId: row.telegram_chat_id ?? null,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
   };
 }
@@ -932,7 +950,7 @@ async function loadMarketingContactById(id: number | null | undefined): Promise<
   }
 
   const rows = await sequelize.query(
-    `SELECT id, full_name, email, mobile_no, branch, experience, created_at
+    `SELECT id, full_name, email, mobile_no, branch, experience, telegram_chat_id, created_at
      FROM marketing_contacts
      WHERE id = :id
      LIMIT 1`,
@@ -957,6 +975,7 @@ function mapSubscriberRow(row: any) {
     mobileNo: row.mobile_no ?? null,
     branch: row.branch ?? null,
     experience: row.experience ?? null,
+    telegramChatId: row.telegram_chat_id ?? null,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
     updatedAt: null,
   };

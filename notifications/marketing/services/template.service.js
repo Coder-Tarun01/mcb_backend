@@ -21,8 +21,17 @@ function buildDigestTemplate({ contact, jobs, mailFrom }) {
     throw new Error('Contact and jobs are required to build digest template');
   }
 
+  const profileParts = [];
+  if (contact.branch) {
+    profileParts.push(contact.branch.trim());
+  }
+  if (contact.experience) {
+    profileParts.push(contact.experience.trim());
+  }
+  const profileLabel = profileParts.length > 0 ? ` (${profileParts.join(', ')})` : '';
+
   const safeJobs = jobs.map((job) => {
-    const ctaUrl = job.ctaUrl || buildDefaultApplyUrl(job.source, job.id);
+    const ctaUrl = job.applyUrl || job.ctaUrl || buildDefaultApplyUrl(job.source, job.id);
     return {
       ...job,
       ctaUrl,
@@ -31,58 +40,81 @@ function buildDigestTemplate({ contact, jobs, mailFrom }) {
     };
   });
 
-  const subject = `New role at ${safeJobs.length > 0 ? safeJobs[0].companyName || 'top companies' : 'MyCareerBuild'}: ${
-    safeJobs.length > 0 ? safeJobs[0].title : 'Fresh opportunities'
-  } (MyCareerBuild)`;
+  const subject = `Your Latest Job Digest - Based on Your Profile${profileLabel}`;
+
+  const jobItemsHtml = safeJobs
+    .map(
+      (job) => `
+        <tr>
+          <td style="padding: 16px 24px; border-bottom: 1px solid #e6e9ed;">
+            <h3 style="margin: 0 0 8px; font-size: 18px; color: #1a1f36;">${escapeHtml(job.title)}</h3>
+            <p style="margin: 0 0 4px; font-size: 14px; color: #4f566b;">
+              <strong>${escapeHtml(job.companyName || 'Confidential')}</strong> • ${escapeHtml(job.location || 'Flexible location')} • ${escapeHtml(job.remoteLabel)}
+            </p>
+            <p style="margin: 0 0 12px; font-size: 14px; color: #6b7280;">Posted: ${escapeHtml(job.createdAtLabel)}</p>
+            <a href="${job.ctaUrl}" style="display: inline-block; padding: 10px 16px; background-color: #1d4ed8; color: #ffffff; text-decoration: none; border-radius: 4px; font-size: 14px;" target="_blank" rel="noopener noreferrer">View & Apply</a>
+          </td>
+        </tr>
+      `
+    )
+    .join('');
 
   const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #222;">
-      <p>Hi ${escapeHtml(contact.fullName)},</p>
-      <p>Here are the latest opportunities curated for you from MyCareerBuild:</p>
-      <ol>
-        ${safeJobs
-          .map(
-            (job) => `
-              <li style="margin-bottom: 12px;">
-                <strong>${escapeHtml(job.title)}</strong> at <strong>${escapeHtml(job.companyName || 'Confidential')}</strong><br/>
-                <span>${escapeHtml(job.location || 'Location flexible')}</span> • <span>${escapeHtml(job.remoteLabel)}</span><br/>
-                <span>Posted: ${escapeHtml(job.createdAtLabel)}</span><br/>
-                <a href="${job.ctaUrl}" style="color: #0052cc; text-decoration: underline;" target="_blank" rel="noopener noreferrer">View role & apply</a>
-              </li>
-            `
-          )
-          .join('')}
-      </ol>
-      <p>We’ll keep sending you tailored opportunities. Prefer fewer emails or want to pause updates? Just reply with <strong>“Unsubscribe”</strong> and we’ll take care of it.</p>
-      <p>Best regards,<br/>${escapeHtml(mailFrom.name)} Team</p>
-      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
-      <p style="font-size: 12px; color: #666;">
-        You’re receiving this email because you opted in for marketing updates with MyCareerBuild.<br/>
-        To unsubscribe, reply with “Unsubscribe” from this address.
-      </p>
-    </div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-family: 'Segoe UI', Arial, sans-serif; background-color: #f5f7fa; padding: 32px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);">
+            <tr>
+              <td style="padding: 32px 40px; border-bottom: 1px solid #e6e9ed;">
+                <p style="margin: 0 0 12px; font-size: 16px; color: #1a1f36;">Dear ${escapeHtml(contact.fullName)},</p>
+                <p style="margin: 0; font-size: 16px; color: #1a1f36;">Based on your profile${profileLabel}, here are the top 3 opportunities we recommend for you:</p>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">${jobItemsHtml}</table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 24px 40px; border-top: 1px solid #e6e9ed;">
+                <p style="margin: 0 0 8px; font-size: 14px; color: #4f566b;">Need more options or wish to tailor your alerts further? Reply to this email and we’ll be glad to assist.</p>
+                <p style="margin: 0; font-size: 14px; color: #4f566b;">Warm regards,<br/>${escapeHtml(mailFrom.name)} Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 16px 40px; background-color: #f8fafc; font-size: 12px; color: #6b7280;">
+                You are receiving this email because you subscribed to job updates on MyCareerBuild. If you wish to unsubscribe, simply reply with "Unsubscribe" from this address.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
 
   const text = [
-    `Hi ${contact.fullName},`,
+    `Dear ${contact.fullName},`,
     '',
-    'Here are the latest opportunities curated for you from MyCareerBuild:',
+    `Based on your profile${profileLabel}, here are the top 3 opportunities we recommend for you:`,
     '',
-    ...safeJobs.map(
-      (job, index) =>
-        `${index + 1}. ${job.title} at ${job.companyName || 'Confidential'}\n` +
-        `   Location: ${job.location || 'Location flexible'} • ${job.remoteLabel}\n` +
-        `   Posted: ${job.createdAtLabel}\n` +
-        `   Apply: ${job.ctaUrl}`
-    ),
+    ...safeJobs.map((job, index) => {
+      const applyUrl = job.ctaUrl;
+      return [
+        `${index + 1}. ${job.title} at ${job.companyName || 'Confidential'}`,
+        `   Location: ${job.location || 'Flexible location'} • ${job.remoteLabel}`,
+        `   Posted: ${job.createdAtLabel}`,
+        `   Apply: ${applyUrl}`,
+        '',
+      ].join('\n');
+    }),
+    'Need more options or wish to tailor your alerts further? Reply to this email and we will be glad to assist.',
     '',
-    'Prefer fewer emails or want to pause updates? Reply with "Unsubscribe" and we’ll handle it.',
-    '',
-    `Best regards,\n${mailFrom.name} Team`,
+    `Warm regards,`,
+    `${mailFrom.name} Team`,
     '',
     '---',
-    'You’re receiving this email because you opted in for marketing updates with MyCareerBuild.',
-    'To unsubscribe, reply with “Unsubscribe” from this address.',
+    'You are receiving this email because you subscribed to job updates on MyCareerBuild.',
+    'To unsubscribe, reply with "Unsubscribe" from this address.',
   ].join('\n');
 
   return {

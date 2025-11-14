@@ -4,8 +4,11 @@ const { getSequelize } = require('../utils/sequelize');
 const EMAIL_REGEX =
   /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
 
-function createContactsRepository({ sequelize = getSequelize() } = {}) {
-  async function fetchContacts() {
+function createContactsRepository({ sequelize = getSequelize(), maxContacts = 200 } = {}) {
+  async function fetchContacts(limitOverride) {
+    const effectiveLimitRaw = Number(limitOverride ?? maxContacts);
+    const effectiveLimit = Number.isFinite(effectiveLimitRaw) && effectiveLimitRaw > 0 ? Math.floor(effectiveLimitRaw) : maxContacts;
+
     const rows = await sequelize.query(
       `
         SELECT
@@ -15,10 +18,14 @@ function createContactsRepository({ sequelize = getSequelize() } = {}) {
           mobile_no,
           branch,
           experience,
+          telegram_chat_id,
           created_at
         FROM marketing_contacts
+        ORDER BY created_at DESC
+        LIMIT :limit
       `,
       {
+        replacements: { limit: effectiveLimit },
         type: QueryTypes.SELECT,
       }
     );
@@ -43,6 +50,7 @@ function createContactsRepository({ sequelize = getSequelize() } = {}) {
           mobileNo: row.mobile_no || null,
           branch: row.branch || null,
           experience: row.experience || null,
+          telegramChatId: row.telegram_chat_id || null,
           createdAt: row.created_at ? new Date(row.created_at) : null,
         });
       }

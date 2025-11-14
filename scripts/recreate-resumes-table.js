@@ -13,9 +13,9 @@ dotenv.config();
 
 const {
   DB_HOST = 'localhost',
-  DB_PORT = 5432,
-  DB_NAME = 'mcb',
-  DB_USER = 'postgres',
+  DB_PORT = 3306,
+  DB_NAME = 'mycareerbuild',
+  DB_USER = 'root',
   DB_PASSWORD = 'secret',
   NODE_ENV = 'development'
 } = process.env;
@@ -28,12 +28,16 @@ async function recreateResumesTable() {
   // Connect to the database
   const sequelize = new Sequelize({
     database: DB_NAME,
-    dialect: 'postgres',
+    dialect: 'mysql',
     host: DB_HOST,
     port: DB_PORT,
     username: DB_USER,
     password: DB_PASSWORD,
-    logging: console.log
+    logging: console.log,
+    dialectOptions: {
+      charset: 'utf8mb4',
+      collate: 'utf8mb4_unicode_ci'
+    }
   });
 
   try {
@@ -43,57 +47,42 @@ async function recreateResumesTable() {
 
     // Drop existing table
     console.log('🗑️  Dropping existing resumes table...');
-    await sequelize.query('DROP TABLE IF EXISTS resumes CASCADE');
+    await sequelize.query('DROP TABLE IF EXISTS resumes');
     console.log('✅ Existing table dropped');
 
     // Create new table with correct schema
     console.log('🏗️  Creating new resumes table...');
     const createTableQuery = `
       CREATE TABLE resumes (
-        id UUID PRIMARY KEY,
-        user_id UUID NOT NULL,
+        id VARCHAR(36) PRIMARY KEY,
+        user_id VARCHAR(36) NOT NULL,
         title VARCHAR(255) NOT NULL DEFAULT 'My Resume',
         is_primary BOOLEAN NOT NULL DEFAULT FALSE,
         is_public BOOLEAN NOT NULL DEFAULT FALSE,
-        status TEXT NOT NULL DEFAULT 'draft',
-        personal_info JSONB NOT NULL,
-        work_experience JSONB NOT NULL,
-        education JSONB NOT NULL,
-        skills JSONB NOT NULL,
-        projects JSONB NOT NULL,
-        certifications JSONB NOT NULL,
-        languages JSONB NOT NULL,
-        "references" JSONB NOT NULL,
-        additional_info JSONB NOT NULL,
-        settings JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
-    `;
-    const statusConstraint = `
-      ALTER TABLE resumes
-      ADD CONSTRAINT resumes_status_check
-      CHECK (status IN ('draft', 'published', 'archived'))
-      NOT VALID;
-    `;
-    const makeConstraintValid = `
-      ALTER TABLE resumes
-      VALIDATE CONSTRAINT resumes_status_check;
+        status ENUM('draft', 'published', 'archived') NOT NULL DEFAULT 'draft',
+        personal_info JSON NOT NULL,
+        work_experience JSON NOT NULL,
+        education JSON NOT NULL,
+        skills JSON NOT NULL,
+        projects JSON NOT NULL,
+        certifications JSON NOT NULL,
+        languages JSON NOT NULL,
+        \`references\` JSON NOT NULL,
+        additional_info JSON NOT NULL,
+        settings JSON NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_user_id (user_id),
+        INDEX idx_is_primary (is_primary),
+        INDEX idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `;
 
     await sequelize.query(createTableQuery);
-    await sequelize.query(statusConstraint).catch(() => {});
-    await sequelize.query(makeConstraintValid).catch(() => {});
     console.log('✅ New resumes table created successfully');
 
     // Verify the new table structure
-    const [columns] = await sequelize.query(`
-      SELECT column_name, data_type, is_nullable
-      FROM information_schema.columns
-      WHERE table_schema = current_schema()
-        AND table_name = 'resumes'
-      ORDER BY ordinal_position
-    `);
+    const [columns] = await sequelize.query("DESCRIBE resumes");
     console.log('\n📋 New table structure:');
     console.table(columns);
 

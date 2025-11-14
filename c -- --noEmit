@@ -1,0 +1,210 @@
+warning: in the working copy of 'src/controllers/profile.controller.ts', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/src/controllers/profile.controller.ts b/src/controllers/profile.controller.ts[m
+[1mindex 4fcd387..8d2f053 100644[m
+[1m--- a/src/controllers/profile.controller.ts[m
+[1m+++ b/src/controllers/profile.controller.ts[m
+[36m@@ -1,7 +1,6 @@[m
+ import { Request, Response, NextFunction } from 'express';[m
+[31m-import multer from 'multer';[m
+[31m-import path from 'path';[m
+[31m-import { User } from '../models';[m
+[32m+[m[32mimport multer, { FileFilterCallback } from 'multer';[m
+[32m+[m[32mimport { User, type UserAttributes } from '../models';[m
+ import { AuthRequest } from '../middleware/auth';[m
+ import { uploadToS3, deleteFromS3 } from '../services/s3Service';[m
+ [m
+[36m@@ -11,7 +10,7 @@[m [mconst upload = multer({[m
+   limits: {[m
+     fileSize: 5 * 1024 * 1024, // 5MB limit[m
+   },[m
+[31m-  fileFilter: (req, file, cb) => {[m
+[32m+[m[32m  fileFilter: (req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {[m
+     // Allow only image files for avatars[m
+     if (file.fieldname === 'avatar') {[m
+       const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];[m
+[36m@@ -39,6 +38,39 @@[m [mconst upload = multer({[m
+ export const uploadResume = upload.single('resume');[m
+ export const uploadAvatar = upload.single('avatar');[m
+ [m
+[32m+[m[32mconst allowedFields = [[m
+[32m+[m[32m  'name',[m
+[32m+[m[32m  'phone',[m
+[32m+[m[32m  'companyName',[m
+[32m+[m[32m  'skills',[m
+[32m+[m[32m  'avatarUrl',[m
+[32m+[m[32m  'resumeUrl',[m
+[32m+[m[32m  'companyLogo'[m
+[32m+[m[32m] as const;[m
+[32m+[m
+[32m+[m[32mconst fileUrlFields = ['avatarUrl', 'resumeUrl', 'companyLogo'] as const;[m
+[32m+[m
+[32m+[m[32mconst additionalFields = [[m
+[32m+[m[32m  'professionalTitle',[m
+[32m+[m[32m  'languages',[m
+[32m+[m[32m  'age',[m
+[32m+[m[32m  'currentSalary',[m
+[32m+[m[32m  'expectedSalary',[m
+[32m+[m[32m  'description',[m
+[32m+[m[32m  'country',[m
+[32m+[m[32m  'postcode',[m
+[32m+[m[32m  'city',[m
+[32m+[m[32m  'fullAddress'[m
+[32m+[m[32m] as const;[m
+[32m+[m
+[32m+[m[32mtype AllowedField = typeof allowedFields[number];[m
+[32m+[m[32mtype FileUrlField = typeof fileUrlFields[number];[m
+[32m+[m[32mtype AdditionalField = typeof additionalFields[number];[m
+[32m+[m[32mtype UpdatableField = AllowedField | AdditionalField;[m
+[32m+[m
+[32m+[m[32mconst isFileUrlField = (field: AllowedField): field is FileUrlField =>[m
+[32m+[m[32m  (fileUrlFields as readonly string[]).includes(field);[m
+[32m+[m
+ export async function getProfile(req: Request, res: Response, next: NextFunction) {[m
+   try {[m
+     const userId = (req as AuthRequest).user?.id;[m
+[36m@@ -49,7 +81,9 @@[m [mexport async function getProfile(req: Request, res: Response, next: NextFunction[m
+ [m
+     const { password, ...profile } = user.toJSON();[m
+     res.json(profile);[m
+[31m-  } catch (e) { next(e); }[m
+[32m+[m[32m  } catch (error: unknown) {[m
+[32m+[m[32m    next(error);[m
+[32m+[m[32m  }[m
+ }[m
+ [m
+ export async function updateProfile(req: Request, res: Response, next: NextFunction) {[m
+[36m@@ -71,16 +105,23 @@[m [mexport async function updateProfile(req: Request, res: Response, next: NextFunct[m
+     console.log('📊 Current User Data:', currentData);[m
+ [m
+     // Filter out password and only allow specific fields[m
+[31m-    const allowedFields = ['name', 'phone', 'companyName', 'skills', 'avatarUrl', 'resumeUrl', 'companyLogo'];[m
+[31m-    const updateData: any = {};[m
+[32m+[m[32m    const body = req.body as Partial<[m
+[32m+[m[32m      Record<UpdatableField, UserAttributes[UpdatableField]>[m
+[32m+[m[32m    > &[m
+[32m+[m[32m      Record<string, unknown>;[m
+[32m+[m
+[32m+[m[32m    const updateData: Partial<[m
+[32m+[m[32m      Record<UpdatableField, UserAttributes[UpdatableField]>[m
+[32m+[m[32m    > = {};[m
+     [m
+     for (const field of allowedFields) {[m
+[31m-      if (req.body[field] !== undefined && req.body[field] !== null) {[m
+[32m+[m[32m      const value = body[field];[m
+[32m+[m[32m      if (value !== undefined && value !== null) {[m
+         // Validate S3 URLs for file fields[m
+[31m-        if ((field === 'avatarUrl' || field === 'resumeUrl' || field === 'companyLogo') && req.body[field]) {[m
+[31m-          const url = req.body[field];[m
+[32m+[m[32m        if (isFileUrlField(field) && typeof value === 'string') {[m
+[32m+[m[32m          const url = value;[m
+           // Check if it's a valid S3 URL or local upload URL[m
+[31m-          if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('/uploads/'))) {[m
+[32m+[m[32m          if (url.startsWith('https://') || url.startsWith('/uploads/')) {[m
+             updateData[field] = url;[m
+           } else {[m
+             console.warn(`Invalid URL format for ${field}:`, url);[m
+[36m@@ -88,20 +129,16 @@[m [mexport async function updateProfile(req: Request, res: Response, next: NextFunct[m
+             continue;[m
+           }[m
+         } else {[m
+[31m-          updateData[field] = req.body[field];[m
+[32m+[m[32m          updateData[field] = value as UserAttributes[AllowedField];[m
+         }[m
+       }[m
+     }[m
+ [m
+     // Add support for additional profile fields[m
+[31m-    const additionalFields = [[m
+[31m-      'professionalTitle', 'languages', 'age', 'currentSalary', 'expectedSalary', [m
+[31m-      'description', 'country', 'postcode', 'city', 'fullAddress'[m
+[31m-    ];[m
+[31m-    [m
+     for (const field of additionalFields) {[m
+[31m-      if (req.body[field] !== undefined && req.body[field] !== null) {[m
+[31m-        updateData[field] = req.body[field];[m
+[32m+[m[32m      const value = body[field];[m
+[32m+[m[32m      if (value !== undefined && value !== null) {[m
+[32m+[m[32m        updateData[field] = value as UserAttributes[AdditionalField];[m
+       }[m
+     }[m
+ [m
+[36m@@ -111,11 +148,13 @@[m [mexport async function updateProfile(req: Request, res: Response, next: NextFunct[m
+     try {[m
+       await user.update(updateData);[m
+       console.log('✅ Database Update Completed');[m
+[31m-    } catch (updateError: any) {[m
+[32m+[m[32m    } catch (updateError: unknown) {[m
+[32m+[m[32m      const message =[m
+[32m+[m[32m        updateError instanceof Error ? updateError.message : 'Unknown error';[m
+       console.error('❌ Database Update Failed:', updateError);[m
+       return res.status(500).json({ [m
+         message: 'Failed to update profile in database',[m
+[31m-        error: updateError.message [m
+[32m+[m[32m        error: message[m[41m [m
+       });[m
+     }[m
+ [m
+[36m@@ -137,7 +176,7 @@[m [mexport async function updateProfile(req: Request, res: Response, next: NextFunct[m
+       user: updatedUser.toJSON(),[m
+       updatedFields: Object.keys(updateData)[m
+     });[m
+[31m-  } catch (error) {[m
+[32m+[m[32m  } catch (error: unknown) {[m
+     console.error('❌ Profile Update Error:', error);[m
+     next(error);[m
+   }[m
+[36m@@ -161,7 +200,9 @@[m [mexport async function uploadResumeHandler(req: Request, res: Response, next: Nex[m
+     await user.update({ resumeUrl: uploadResult.url });[m
+ [m
+     res.json({ message: 'Resume uploaded successfully', resumeUrl: uploadResult.url, s3Key: uploadResult.key });[m
+[31m-  } catch (e) { next(e); }[m
+[32m+[m[32m  } catch (error: unknown) {[m
+[32m+[m[32m    next(error);[m
+[32m+[m[32m  }[m
+ }[m
+ [m
+ export async function uploadAvatarHandler(req: Request, res: Response, next: NextFunction) {[m
+[36m@@ -191,7 +232,7 @@[m [mexport async function uploadAvatarHandler(req: Request, res: Response, next: Nex[m
+         const s3Key = urlParts.slice(3).join('/'); // Remove https://bucket.s3.region.amazonaws.com/[m
+         await deleteFromS3(s3Key);[m
+         console.log('🗑️ Deleted old avatar from S3:', s3Key);[m
+[31m-      } catch (deleteError) {[m
+[32m+[m[32m      } catch (deleteError: unknown) {[m
+         console.warn('⚠️ Failed to delete old avatar:', deleteError);[m
+         // Continue with upload even if deletion fails[m
+       }[m
+[36m@@ -210,11 +251,12 @@[m [mexport async function uploadAvatarHandler(req: Request, res: Response, next: Nex[m
+       avatarUrl: uploadResult.url,[m
+       s3Key: uploadResult.key[m
+     });[m
+[31m-  } catch (error: any) {[m
+[32m+[m[32m  } catch (error: unknown) {[m
+[32m+[m[32m    const message = error instanceof Error ? error.message : 'Unknown error';[m
+     console.error('❌ Avatar upload error:', error);[m
+     res.status(500).json({ [m
+       message: 'Failed to upload avatar', [m
+[31m-      error: error.message [m
+[32m+[m[32m      error: message[m[41m [m
+     });[m
+   }[m
+ }[m
+[36m@@ -229,7 +271,9 @@[m [mexport async function getSkills(req: Request, res: Response, next: NextFunction)[m
+     if (!user) return res.status(404).json({ message: 'User not found' });[m
+ [m
+     res.json({ skills: user.skills || [] });[m
+[31m-  } catch (e) { next(e); }[m
+[32m+[m[32m  } catch (error: unknown) {[m
+[32m+[m[32m    next(error);[m
+[32m+[m[32m  }[m
+ }[m
+ [m
+ export async function updateSkills(req: Request, res: Response, next: NextFunction) {[m
+[36m@@ -247,5 +291,7 @@[m [mexport async function updateSkills(req: Request, res: Response, next: NextFuncti[m
+ [m
+     await user.update({ skills });[m
+     res.json({ skills });[m
+[31m-  } catch (e) { next(e); }[m
+[32m+[m[32m  } catch (error: unknown) {[m
+[32m+[m[32m    next(error);[m
+[32m+[m[32m  }[m
+ }[m

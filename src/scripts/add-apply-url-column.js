@@ -10,13 +10,13 @@ const { Sequelize } = require('sequelize');
 
 // Create sequelize instance directly (no need for compiled models)
 const sequelize = new Sequelize(
-  process.env.DB_NAME || 'mcb',
-  process.env.DB_USER || 'postgres',
+  process.env.DB_NAME || 'mycareerbuild',
+  process.env.DB_USER || 'root',
   process.env.DB_PASSWORD || 'secret',
   {
     host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    dialect: 'postgres',
+    port: parseInt(process.env.DB_PORT || '3306', 10),
+    dialect: 'mysql',
     logging: false
   }
 );
@@ -32,11 +32,11 @@ async function addApplyUrlColumn() {
 
     // Check if column already exists
     const [columns] = await sequelize.query(`
-      SELECT column_name
-      FROM information_schema.columns
-      WHERE table_schema = current_schema()
-        AND table_name = 'jobs'
-        AND column_name = 'applyUrl'
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'jobs' 
+      AND COLUMN_NAME = 'applyUrl'
     `);
 
     if (columns.length > 0) {
@@ -44,18 +44,19 @@ async function addApplyUrlColumn() {
     } else {
       // Add applyUrl column
       await sequelize.query(`
-        ALTER TABLE jobs
-        ADD COLUMN IF NOT EXISTS "applyUrl" VARCHAR(500)
+        ALTER TABLE jobs 
+        ADD COLUMN applyUrl VARCHAR(500) NULL 
+        AFTER applicationDeadline
       `);
       console.log('✅ Successfully added applyUrl column to jobs table');
     }
 
     // Create job_apply_clicks table if it doesn't exist
     const [tables] = await sequelize.query(`
-      SELECT tablename
-      FROM pg_tables
-      WHERE schemaname = current_schema()
-        AND tablename = 'job_apply_clicks'
+      SELECT TABLE_NAME 
+      FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'job_apply_clicks'
     `);
 
     if (tables.length > 0) {
@@ -64,14 +65,11 @@ async function addApplyUrlColumn() {
       await sequelize.query(`
         CREATE TABLE IF NOT EXISTS job_apply_clicks (
           id VARCHAR(36) PRIMARY KEY,
-          "jobId" VARCHAR(255) NOT NULL,
-          "userId" VARCHAR(36) NOT NULL,
-          "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      await sequelize.query(`
-        CREATE INDEX IF NOT EXISTS idx_job_user_date
-        ON job_apply_clicks ("jobId", "userId", "createdAt")
+          jobId VARCHAR(255) NOT NULL,
+          userId VARCHAR(36) NOT NULL,
+          createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_job_user_date (jobId, userId, createdAt)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
       console.log('✅ Successfully created job_apply_clicks table');
     }

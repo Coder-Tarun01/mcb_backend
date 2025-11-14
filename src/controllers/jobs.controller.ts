@@ -4,6 +4,9 @@ import { buildJobSlug, extractIdFromSlug } from '../utils/slug';
 import { AuthRequest } from '../middleware/auth';
 import { sendJobNotificationEmail, logEmailError } from '../services/mailService';
 import { Op } from 'sequelize';
+import { purgeCache } from '../middleware/cache';
+
+const isDebugLoggingEnabled = process.env.NODE_ENV !== 'production';
 
 export async function listJobs(req: Request, res: Response, next: NextFunction) {
   try {
@@ -30,25 +33,12 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
       if (isRemote === 'true' || isRemote === true) where.isRemote = true;
       if (isRemote === 'false' || isRemote === false) where.isRemote = false;
     }
-    if (location) {
-      const locationClause = {
-        [Op.or]: [
-          { location: { [Op.iLike]: `%${location}%` } },
-          { city: { [Op.iLike]: `%${location}%` } },
-          { state: { [Op.iLike]: `%${location}%` } },
-          { country: { [Op.iLike]: `%${location}%` } },
-        ],
-      };
-      if (!where[Op.and]) {
-        where[Op.and] = [];
-      }
-      where[Op.and].push(locationClause);
-    }
+    if (location) where.location = { [Op.like]: `%${location}%` };
     if (search) {
       where[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { company: { [Op.iLike]: `%${search}%` } },
-        { description: { [Op.iLike]: `%${search}%` } },
+        { title: { [Op.like]: `%${search}%` } },
+        { company: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } },
       ];
     }
 
@@ -66,16 +56,12 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
     // Query AI jobs with similar filters
     const aiWhere: any = {};
     if (type) aiWhere.job_type = type;
-    if (location) {
-      const existingOr = aiWhere[Op.or] || [];
-      existingOr.push({ location: { [Op.iLike]: `%${location}%` } });
-      aiWhere[Op.or] = existingOr;
-    }
+    if (location) aiWhere.location = { [Op.like]: `%${location}%` };
     if (search) {
       aiWhere[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { company: { [Op.iLike]: `%${search}%` } },
-        { description: { [Op.iLike]: `%${search}%` } },
+        { title: { [Op.like]: `%${search}%` } },
+        { company: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } },
       ];
     }
 
@@ -370,7 +356,9 @@ export async function createJob(req: Request, res: Response, next: NextFunction)
       status: status || 'Active'
     };
 
-    console.log('Creating job with data:', jobData);
+    if (isDebugLoggingEnabled) {
+      console.log('Creating job with data:', jobData);
+    }
 
     const created = await Job.create(jobData);
     // Generate and store slug after ID is known
@@ -425,7 +413,9 @@ export async function createJob(req: Request, res: Response, next: NextFunction)
         const emailResult = await sendJobNotificationEmail(jobSeekerEmails, jobData);
         
         if (emailResult.success) {
-          console.log('✅ Job notification emails sent successfully');
+          if (isDebugLoggingEnabled) {
+            console.log('✅ Job notification emails sent successfully');
+          }
         } else {
           logEmailError('Job Notification', emailResult.error);
         }
@@ -436,6 +426,8 @@ export async function createJob(req: Request, res: Response, next: NextFunction)
     }
 
     res.status(201).json(responseData);
+    purgeCache('jobs:list*');
+    purgeCache('notifications:jobs:freshers*');
   } catch (e) { 
     console.error('Error creating job:', e);
     next(e); 
@@ -461,7 +453,9 @@ export async function updateJob(req: Request, res: Response, next: NextFunction)
       return res.status(403).json({ message: 'You can only update your own jobs' });
     }
     
-    console.log('Updating job with data:', req.body);
+    if (isDebugLoggingEnabled) {
+      console.log('Updating job with data:', req.body);
+    }
 
     // Extract and validate the update data
     const { 
@@ -534,7 +528,9 @@ export async function updateJob(req: Request, res: Response, next: NextFunction)
     }
     if (status !== undefined) updateData.status = status;
 
-    console.log('Processed update data:', updateData);
+    if (isDebugLoggingEnabled) {
+      console.log('Processed update data:', updateData);
+    }
 
     // Update the job
     await job.update(updateData);
@@ -574,8 +570,13 @@ export async function updateJob(req: Request, res: Response, next: NextFunction)
       contactPhone: jobData.contactPhone
     };
     
-    console.log('Job updated successfully:', transformedJob);
+    if (isDebugLoggingEnabled) {
+      console.log('Job updated successfully:', transformedJob);
+    }
+
     res.json(transformedJob);
+    purgeCache('jobs:list*');
+    purgeCache('notifications:jobs:freshers*');
   } catch (e) { 
     console.error('Error updating job:', e);
     next(e); 
@@ -604,7 +605,9 @@ export async function deleteJob(req: Request, res: Response, next: NextFunction)
       return res.status(403).json({ message: 'You can only delete your own jobs' });
     }
 
-    console.log('Deleting job:', req.params.id, 'for user:', userId);
+    if (isDebugLoggingEnabled) {
+      console.log('Deleting job:', req.params.id, 'for user:', userId);
+    }
 
     // Use a transaction to handle related data deletion
     const { sequelize } = require('../models');
@@ -612,7 +615,9 @@ export async function deleteJob(req: Request, res: Response, next: NextFunction)
 
     try {
       // Delete related data first to avoid foreign key constraint issues
-      console.log('Deleting related data...');
+      if (isDebugLoggingEnabled) {
+        console.log('Deleting related data...');
+      }
       
       // Delete applications for this job
       const { Application } = require('../models');
@@ -620,7 +625,9 @@ export async function deleteJob(req: Request, res: Response, next: NextFunction)
         where: { jobId: req.params.id },
         transaction
       });
-      console.log('Applications deleted:', applicationsDeleted);
+      if (isDebugLoggingEnabled) {
+        console.log('Applications deleted:', applicationsDeleted);
+      }
 
       // Delete saved jobs for this job
       const { SavedJob } = require('../models');
@@ -628,7 +635,9 @@ export async function deleteJob(req: Request, res: Response, next: NextFunction)
         where: { jobId: req.params.id },
         transaction
       });
-      console.log('Saved jobs deleted:', savedJobsDeleted);
+      if (isDebugLoggingEnabled) {
+        console.log('Saved jobs deleted:', savedJobsDeleted);
+      }
 
       // Now delete the job itself
       const deleted = await Job.destroy({ 
@@ -636,7 +645,9 @@ export async function deleteJob(req: Request, res: Response, next: NextFunction)
         transaction
       });
       
-      console.log('Job deleted:', deleted);
+      if (isDebugLoggingEnabled) {
+        console.log('Job deleted:', deleted);
+      }
 
       // Commit the transaction
       await transaction.commit();
@@ -650,6 +661,8 @@ export async function deleteJob(req: Request, res: Response, next: NextFunction)
           savedJobsDeleted
         }
       });
+      purgeCache('jobs:list*');
+      purgeCache('notifications:jobs:freshers*');
     } catch (transactionError) {
       // Rollback the transaction if anything fails
       await transaction.rollback();
@@ -681,13 +694,15 @@ export async function getEmployerJobs(req: Request, res: Response, next: NextFun
 
     // If user doesn't have companyName, provide helpful error with user details
     if (!user.companyName) {
-      console.log('User without companyName:', {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        companyName: user.companyName
-      });
+      if (isDebugLoggingEnabled) {
+        console.log('User without companyName:', {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          companyName: user.companyName
+        });
+      }
       
       return res.status(400).json({ 
         message: 'Employer must have a company name',
@@ -740,7 +755,9 @@ export async function getEmployerJobs(req: Request, res: Response, next: NextFun
       };
     });
 
-    console.log(`Found ${jobsWithStats.length} jobs for employer: ${user.email} (${user.companyName})`);
+    if (isDebugLoggingEnabled) {
+      console.log(`Found ${jobsWithStats.length} jobs for employer: ${user.email} (${user.companyName})`);
+    }
     res.json(jobsWithStats);
   } catch (e) { 
     console.error('Error fetching employer jobs:', e);

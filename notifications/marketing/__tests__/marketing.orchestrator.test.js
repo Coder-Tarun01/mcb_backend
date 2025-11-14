@@ -37,17 +37,26 @@ function createMockContactsRepository({ contacts = [] } = {}) {
   };
 }
 
+function resolveJobsForContact({ contact, jobs, jobsByContact }) {
+  if (jobsByContact instanceof Map && jobsByContact.has(contact.id)) {
+    return jobsByContact.get(contact.id) || [];
+  }
+  return Array.isArray(jobs) ? jobs : [];
+}
+
 function createMockEmailService({ shouldFail = false, failContacts = new Set() } = {}) {
   return {
-    async sendDigestEmails({ contacts, jobs, batchId }) {
+    async sendDigestEmails({ contacts, jobs, jobsByContact, batchId }) {
       const failures = [];
       const successes = [];
 
       for (const contact of contacts) {
+        const jobsForContact = resolveJobsForContact({ contact, jobs, jobsByContact });
+        const jobIds = jobsForContact.map((job) => job.id);
         if (shouldFail || failContacts.has(contact.email)) {
-          failures.push({ contact: contact.email, error: 'SMTP failure', batchId, jobIds: jobs.map((job) => job.id) });
+          failures.push({ contact: contact.email, contactId: contact.id, error: 'SMTP failure', batchId, jobIds });
         } else {
-          successes.push({ contact: contact.email, batchId, jobIds: jobs.map((job) => job.id) });
+          successes.push({ contact: contact.email, contactId: contact.id, batchId, jobIds });
         }
       }
 
@@ -57,6 +66,58 @@ function createMockEmailService({ shouldFail = false, failContacts = new Set() }
         failed: failures.length,
         failures,
         successes,
+      };
+    },
+  };
+}
+
+function createMockTelegramService({ succeedContacts = new Set(), failContacts = new Set(), reason = null } = {}) {
+  return {
+    async sendDigestTelegrams({ contacts, jobs, jobsByContact, batchId }) {
+      const failures = [];
+      const successes = [];
+      let attempted = 0;
+
+      for (const contact of contacts) {
+        if (!contact.telegramChatId) {
+          continue;
+        }
+
+        const jobsForContact = resolveJobsForContact({ contact, jobs, jobsByContact });
+        const jobIds = jobsForContact.map((job) => job.id);
+
+        if (failContacts.has(contact.telegramChatId)) {
+          failures.push({
+            contact: contact.telegramChatId,
+            contactId: contact.id,
+            error: 'Telegram failure',
+            batchId,
+            jobIds,
+          });
+          attempted += 1;
+          continue;
+        }
+
+        if (succeedContacts.size === 0 || succeedContacts.has(contact.telegramChatId)) {
+          successes.push({
+            contact: contact.telegramChatId,
+            contactId: contact.id,
+            batchId,
+            jobIds,
+            transport: 'telegram',
+          });
+          attempted += 1;
+        }
+      }
+
+      return {
+        attempted,
+        succeeded: successes.length,
+        failed: failures.length,
+        failures,
+        successes,
+        skipped: contacts.length - attempted,
+        reason,
       };
     },
   };
@@ -79,10 +140,12 @@ const sampleJob = (id, source = 'jobs') => ({
   ctaUrl: `https://example.com/${id}`,
 });
 
-const sampleContact = (email, id) => ({
+const sampleContact = (email, id, experience, overrides = {}) => ({
   id,
   fullName: `Contact ${id}`,
   email,
+  experience,
+  ...overrides,
 });
 
 test('orchestrator happy path marks jobs notified after successful sends', async () => {
@@ -103,6 +166,7 @@ test('orchestrator happy path marks jobs notified after successful sends', async
       contacts: [sampleContact('contact@example.com', 1)],
     }),
     emailService: createMockEmailService(),
+    telegramService: createMockTelegramService(),
     logger: {
       getFailureRate: async () => ({ failureRate: 0, failed: 0, total: 1 }),
     },
@@ -132,6 +196,7 @@ test('orchestrator handles SMTP failure and skips marking jobs', async () => {
       contacts: [sampleContact('fail@example.com', 2)],
     }),
     emailService: createMockEmailService({ shouldFail: true }),
+    telegramService: createMockTelegramService(),
     logger: {
       getFailureRate: async () => ({ failureRate: 100, failed: 1, total: 1 }),
     },
@@ -156,6 +221,7 @@ test('orchestrator deduplicates contacts and respects digest size', async () => 
       ],
     }),
     emailService: createMockEmailService(),
+    telegramService: createMockTelegramService(),
     logger: {
       getFailureRate: async () => ({ failureRate: 0, failed: 0, total: 1 }),
     },
@@ -166,6 +232,166 @@ test('orchestrator deduplicates contacts and respects digest size', async () => 
 
   assert.equal(summary.jobsIncluded, 1);
   assert.equal(summary.contactsAttempted, 2);
+});
+
+test('orchestrator filters jobs by contact experience', async () => {
+  const matchingJob = {
+    ...sampleJob(101),
+    experience: '3-5 years',
+  };
+  const nonMatchingJob = {
+    ...sampleJob(102),
+    experience: '0-1 years',
+  };
+  const highExperienceJob = {
+    ...sampleJob(103),
+    experience: '6+ years',
+  };
+
+  const captured = new Map();
+  const emailService = {
+    async sendDigestEmails({ contacts, jobsByContact, batchId }) {
+      const successes = [];
+      for (const contact of contacts) {
+        const list = jobsByContact.get(contact.id) || [];
+        captured.set(contact.email, list.map((job) => job.id));
+        successes.push({
+          contact: contact.email,
+          contactId: contact.id,
+          jobIds: list.map((job) => job.id),
+          batchId,
+        });
+      }
+      return {
+        attempted: contacts.length,
+        succeeded: contacts.length,
+        failed: 0,
+        failures: [],
+        successes,
+      };
+    },
+  };
+
+  let notifiedPayload = null;
+  const orchestrator = new MarketingNotificationOrchestrator({
+    config: createMockConfig({ digestSize: 5, dryRun: false }),
+    jobsRepository: {
+      ...createMockJobsRepository({ jobs: [matchingJob, nonMatchingJob, highExperienceJob] }),
+      markJobsNotified: async (payload) => {
+        notifiedPayload = payload;
+        return { jobs: payload.jobs?.length ?? 0 };
+      },
+    },
+    contactsRepository: createMockContactsRepository({
+      contacts: [sampleContact('exp3@example.com', 1, '3')],
+    }),
+    emailService,
+    telegramService: createMockTelegramService(),
+    logger: {
+      getFailureRate: async () => ({ failureRate: 0, failed: 0, total: 1 }),
+    },
+    schedulerService: { start() {}, stop() {} },
+  });
+
+  const summary = await orchestrator.run({ source: 'test' });
+
+  assert.equal(summary.ok, true);
+  assert.equal(summary.contactsSucceeded, 1);
+  assert.deepEqual(captured.get('exp3@example.com'), [101]);
+  assert.deepEqual(notifiedPayload, { jobs: [101] });
+});
+
+test('contacts without experience receive default job selection', async () => {
+  const jobs = [
+    { ...sampleJob(201), experience: '0-1 years' },
+    { ...sampleJob(202), experience: '3-5 years' },
+  ];
+
+  const captured = new Map();
+  const emailService = {
+    async sendDigestEmails({ contacts, jobsByContact, batchId }) {
+      const successes = [];
+      for (const contact of contacts) {
+        const list = jobsByContact.get(contact.id) || [];
+        captured.set(contact.email, list.map((job) => job.id));
+        successes.push({
+          contact: contact.email,
+          contactId: contact.id,
+          jobIds: list.map((job) => job.id),
+          batchId,
+        });
+      }
+      return {
+        attempted: contacts.length,
+        succeeded: contacts.length,
+        failed: 0,
+        failures: [],
+        successes,
+      };
+    },
+  };
+
+  const orchestrator = new MarketingNotificationOrchestrator({
+    config: createMockConfig({ digestSize: 2, dryRun: false }),
+    jobsRepository: createMockJobsRepository({ jobs }),
+    contactsRepository: createMockContactsRepository({
+      contacts: [sampleContact('noexp@example.com', 1, null)],
+    }),
+    emailService,
+    telegramService: createMockTelegramService(),
+    logger: {
+      getFailureRate: async () => ({ failureRate: 0, failed: 0, total: 1 }),
+    },
+    schedulerService: { start() {}, stop() {} },
+  });
+
+  const summary = await orchestrator.run({ source: 'test' });
+
+  assert.equal(summary.ok, true);
+  assert.equal(summary.contactsSucceeded, 1);
+  assert.deepEqual(captured.get('noexp@example.com'), [201, 202]);
+});
+
+test('orchestrator treats telegram success as delivering the digest when email fails', async () => {
+  let markedCalled = false;
+  const jobsRepo = {
+    ...createMockJobsRepository({ jobs: [sampleJob(301)] }),
+    markJobsNotified: async (payload) => {
+      markedCalled = true;
+      assert.deepEqual(payload, { jobs: [301] });
+      return { jobs: 1 };
+    },
+  };
+
+  const orchestrator = new MarketingNotificationOrchestrator({
+    config: createMockConfig(),
+    jobsRepository: jobsRepo,
+    contactsRepository: createMockContactsRepository({
+      contacts: [
+        sampleContact('telegram@example.com', 7, '2', {
+          telegramChatId: '12345',
+        }),
+      ],
+    }),
+    emailService: createMockEmailService({ shouldFail: true }),
+    telegramService: createMockTelegramService({
+      succeedContacts: new Set(['12345']),
+    }),
+    logger: {
+      getFailureRate: async () => ({ failureRate: 0, failed: 0, total: 1 }),
+    },
+    schedulerService: { start() {}, stop() {} },
+  });
+
+  const summary = await orchestrator.run({ source: 'test' });
+
+  assert.equal(summary.ok, true);
+  assert.equal(summary.contactsSucceeded, 1);
+  assert.equal(summary.contactsFailed, 0);
+  assert.equal(summary.channels.email.failed, 1);
+  assert.equal(summary.channels.telegram.succeeded, 1);
+  assert.deepEqual(summary.jobsMarkedNotified, { jobs: [301] });
+  assert.equal(markedCalled, true);
 });
 
 

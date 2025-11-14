@@ -5,12 +5,14 @@ module.exports = {
     // Add slug column (nullable initially) and previousSlugs (JSON)
     await queryInterface.addColumn('jobs', 'slug', {
       type: Sequelize.STRING,
-      allowNull: true
+      allowNull: true,
+      after: 'company'
     });
 
     await queryInterface.addColumn('jobs', 'previousSlugs', {
-      type: Sequelize.JSONB,
-      allowNull: true
+      type: Sequelize.JSON,
+      allowNull: true,
+      after: 'slug'
     });
 
     // Add unique index on slug

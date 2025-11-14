@@ -1,12 +1,12 @@
 const { Sequelize } = require('sequelize');
 
-// PostgreSQL Configuration
+// MySQL Configuration
 const sequelize = new Sequelize({
-  dialect: 'postgres',
+  dialect: 'mysql',
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'mcb',
-  username: process.env.DB_USER || 'postgres',
+  port: parseInt(process.env.DB_PORT || '3306', 10),
+  database: process.env.DB_NAME || 'mycareerbuild',
+  username: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || 'secret',
   logging: console.log,
 });
@@ -15,16 +15,24 @@ async function cleanupDatabase() {
   try {
     console.log('🔧 Starting database cleanup...');
     
-    const [tables] = await sequelize.query(
-      `SELECT tablename FROM pg_tables WHERE schemaname = current_schema()`
-    );
-    console.log(`📋 Found ${tables.length} tables:`, tables.map(t => t.tablename));
-
+    // Disable foreign key checks
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+    console.log('✅ Foreign key checks disabled');
+    
+    // Get all tables
+    const [tables] = await sequelize.query("SHOW TABLES");
+    console.log(`📋 Found ${tables.length} tables:`, tables.map(t => Object.values(t)[0]));
+    
+    // Drop all tables
     for (const table of tables) {
-      const tableName = table.tablename;
+      const tableName = Object.values(table)[0];
       console.log(`🗑️  Dropping table: ${tableName}`);
-      await sequelize.query(`DROP TABLE IF EXISTS "${tableName}" CASCADE`);
+      await sequelize.query(`DROP TABLE IF EXISTS \`${tableName}\``);
     }
+    
+    // Re-enable foreign key checks
+    await sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+    console.log('✅ Foreign key checks re-enabled');
     
     console.log('🎉 Database cleanup completed successfully!');
     

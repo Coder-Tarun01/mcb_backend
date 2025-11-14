@@ -1,4 +1,3 @@
-import { DataTypes } from 'sequelize';
 import { sequelize } from '../models';
 
 declare const process: any;
@@ -13,9 +12,10 @@ async function run() {
   if (!(desc as any).slug) {
     console.log('Adding column: slug');
     await qi.addColumn(table, 'slug', {
-      type: DataTypes.STRING,
-      allowNull: true
-    });
+      type: 'VARCHAR(255)',
+      allowNull: true,
+      after: 'company'
+    } as any);
   } else {
     console.log('Column exists: slug');
   }
@@ -25,21 +25,12 @@ async function run() {
     console.log('Adding column: previousSlugs');
     // Use JSON if supported, fallback to TEXT
     const dialect = sequelize.getDialect();
-    const jsonType = (() => {
-      switch (dialect) {
-        case 'postgres':
-          return DataTypes.JSONB;
-        case 'mysql':
-        case 'mariadb':
-          return DataTypes.JSON;
-        default:
-          return DataTypes.TEXT;
-      }
-    })();
+    const jsonType = dialect === 'mysql' ? 'JSON' : 'TEXT';
     await qi.addColumn(table, 'previousSlugs', {
-      type: jsonType,
-      allowNull: true
-    });
+      type: jsonType as any,
+      allowNull: true,
+      after: 'slug'
+    } as any);
   } else {
     console.log('Column exists: previousSlugs');
   }

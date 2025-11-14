@@ -4,12 +4,14 @@ module.exports = {
   up: async (queryInterface, Sequelize) => {
     await queryInterface.addColumn('companies', 'slug', {
       type: Sequelize.STRING,
-      allowNull: true
+      allowNull: true,
+      after: 'name'
     });
 
     await queryInterface.addColumn('companies', 'previousSlugs', {
-      type: Sequelize.JSONB,
-      allowNull: true
+      type: Sequelize.JSON,
+      allowNull: true,
+      after: 'slug'
     });
 
     await queryInterface.addIndex('companies', ['slug'], {

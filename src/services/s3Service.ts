@@ -131,7 +131,7 @@ export const getSignedUrl = async (key: string, expiresIn: number = 3600): Promi
   try {
     const bucketName = process.env.AWS_BUCKET_NAME!;
 
-    let s3Key = key;
+    let s3Key: string = key;
 
     try {
       const parsed = new URL(key);
@@ -159,8 +159,8 @@ export const getSignedUrl = async (key: string, expiresIn: number = 3600): Promi
     }
 
     if (s3Key.includes('?')) {
-      const [withoutQuery] = s3Key.split('?');
-      s3Key = withoutQuery ?? '';
+      const cleanKey = s3Key.split('?')[0] ?? '';
+      s3Key = cleanKey;
     }
 
     s3Key = s3Key.replace(/^\/+/g, '');

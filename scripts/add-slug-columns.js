@@ -2,72 +2,63 @@
   Plain Node script to add slug columns without TypeScript build.
 */
 require('dotenv').config();
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 
-async function columnExists(client, table, column) {
-  const { rows } = await client.query(
-    `SELECT COUNT(*) AS cnt
-     FROM information_schema.columns
-     WHERE table_schema = current_schema()
-       AND table_name = $1
-       AND column_name = $2`,
-    [table, column]
+async function columnExists(conn, table, column) {
+  const [rows] = await conn.execute(
+    `SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [process.env.DB_NAME || 'mycareerbuild', table, column]
   );
-  return Number(rows[0].cnt) > 0;
+  return rows[0].cnt > 0;
 }
 
-async function indexExists(client, table, indexName) {
-  const { rows } = await client.query(
-    `SELECT indexname
-     FROM pg_indexes
-     WHERE schemaname = current_schema()
-       AND tablename = $1
-       AND indexname = $2`,
-    [table, indexName]
+async function indexExists(conn, table, indexName) {
+  const [rows] = await conn.execute(
+    `SHOW INDEX FROM \`${table}\``
   );
-  return rows.length > 0;
+  return rows.some(r => r.Key_name === indexName);
 }
 
 async function run() {
   const host = process.env.DB_HOST || 'localhost';
-  const port = parseInt(process.env.DB_PORT || '5432', 10);
-  const user = process.env.DB_USER || 'postgres';
+  const port = parseInt(process.env.DB_PORT || '3306', 10);
+  const user = process.env.DB_USER || 'root';
   const password = process.env.DB_PASSWORD || 'secret';
-  const database = process.env.DB_NAME || 'mcb';
+  const database = process.env.DB_NAME || 'mycareerbuild';
 
-  const pool = new Pool({ host, port, user, password, database });
-  const client = await pool.connect();
+  const conn = await mysql.createConnection({ host, port, user, password, database });
+  const table = 'jobs';
+  console.log('Connected. Checking table:', table);
 
-  try {
-    const table = 'jobs';
-    console.log('Connected. Checking table:', table);
-
-    if (!(await columnExists(client, table, 'slug'))) {
-      console.log('Adding column slug');
-      await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS "slug" VARCHAR(255)`);
-    } else {
-      console.log('Column slug exists');
-    }
-
-    if (!(await columnExists(client, table, 'previousSlugs'))) {
-      console.log('Adding column previousSlugs');
-      await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS "previousSlugs" JSONB`);
-    } else {
-      console.log('Column previousSlugs exists');
-    }
-
-    if (!(await indexExists(client, table, 'jobs_slug_unique_idx'))) {
-      console.log('Adding unique index on slug');
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS jobs_slug_unique_idx ON ${table} ("slug")`);
-    } else {
-      console.log('Unique index exists');
-    }
-
-    console.log('✅ add-slug-columns.js complete');
-  } finally {
-    client.release();
-    await pool.end();
+  if (!(await columnExists(conn, table, 'slug'))) {
+    console.log('Adding column slug');
+    await conn.execute(`ALTER TABLE \`${table}\` ADD COLUMN \`slug\` VARCHAR(255) NULL AFTER \`company\``);
+  } else {
+    console.log('Column slug exists');
   }
+
+  if (!(await columnExists(conn, table, 'previousSlugs'))) {
+    console.log('Adding column previousSlugs');
+    // JSON type if supported; fallback to TEXT
+    try {
+      await conn.execute(`ALTER TABLE \`${table}\` ADD COLUMN \`previousSlugs\` JSON NULL AFTER \`slug\``);
+    } catch (e) {
+      console.log('JSON type unsupported, falling back to TEXT');
+      await conn.execute(`ALTER TABLE \`${table}\` ADD COLUMN \`previousSlugs\` TEXT NULL AFTER \`slug\``);
+    }
+  } else {
+    console.log('Column previousSlugs exists');
+  }
+
+  if (!(await indexExists(conn, table, 'jobs_slug_unique_idx'))) {
+    console.log('Adding unique index on slug');
+    await conn.execute(`CREATE UNIQUE INDEX \`jobs_slug_unique_idx\` ON \`${table}\` (\`slug\`)`);
+  } else {
+    console.log('Unique index exists');
+  }
+
+  await conn.end();
+  console.log('✅ add-slug-columns.js complete');
 }
 
 run().catch(err => {
