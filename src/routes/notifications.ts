@@ -253,8 +253,86 @@ router.get(
         },
       });
     }
+<<<<<<< HEAD
+
+    const sequelizeInstance =
+      jobFetcher && typeof jobFetcher.getSequelize === 'function'
+        ? jobFetcher.getSequelize()
+        : sequelize;
+    const dialect = sequelizeInstance.getDialect();
+    const queryGenerator = sequelizeInstance.getQueryInterface().queryGenerator;
+    const quoteIdentifier = (identifier: string): string => queryGenerator.quoteIdentifier(identifier);
+    const quoteTable = (tableName: string): string => queryGenerator.quoteTable(tableName);
+
+    const replacements: Record<string, unknown> = {};
+    const experienceColumn = quoteIdentifier('experienceLevel');
+    const applyUrlColumn = quoteIdentifier('applyUrl');
+    const createdAtColumn = quoteIdentifier('createdAt');
+    const notifySentColumn = quoteIdentifier('notify_sent');
+    const jobTypeColumn = quoteIdentifier('type');
+    const jobsTable = quoteTable('jobs');
+    const notifySentFalse = dialect === 'postgres' ? 'FALSE' : '0';
+
+    let query =
+      'SELECT id, title, company, location, ' +
+      `COALESCE(${experienceColumn}, '') AS experience, ` +
+      `${jobTypeColumn} AS jobType, COALESCE(${applyUrlColumn}, '') AS link, ${notifySentColumn} AS notifySent, ${createdAtColumn} AS createdAt ` +
+      `FROM ${jobsTable} WHERE ${jobTypeColumn} = 'Fresher'`;
+
+    if (!includeNotified) {
+      query += ` AND ${notifySentColumn} = ${notifySentFalse}`;
+    }
+
+    query += ` ORDER BY ${createdAtColumn} DESC`;
+
+    if (limit > 0) {
+      query += ' LIMIT :limit';
+      replacements.limit = limit;
+    }
+
+    const jobs = await sequelizeInstance.query(query, {
+      replacements,
+      type: QueryTypes.SELECT,
+    });
+
+    const statsQuery =
+      `SELECT COUNT(*) AS total, ` +
+      `SUM(CASE WHEN ${notifySentColumn} = ${notifySentFalse} THEN 1 ELSE 0 END) AS pending ` +
+      `FROM ${jobsTable} WHERE ${jobTypeColumn} = 'Fresher'`;
+
+    const statsRows = (await sequelizeInstance.query(statsQuery, {
+      type: QueryTypes.SELECT,
+    })) as Array<{ total: number; pending: number | null }>;
+
+    const statsRow = statsRows[0] || { total: 0, pending: 0 };
+    const pending = Number(statsRow.pending ?? 0);
+    const total = Number(statsRow.total ?? 0);
+    const stats = {
+      total,
+      pending,
+      notified: Math.max(total - pending, 0),
+    };
+
+    res.json({
+      success: true,
+      message: 'Fresher jobs retrieved',
+      data: {
+        jobs,
+        stats,
+      },
+    });
+  } catch (error: any) {
+    console.error('Failed to fetch fresher jobs', error);
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to fetch fresher jobs',
+    });
+  }
+});
+=======
   )
 );
+>>>>>>> ed875dd4ab4252a5050f15e4516a68a8721a4d09
 
 router.post(
   '/upload-csv',
