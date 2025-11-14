@@ -14,7 +14,6 @@ function configureDialect(sequelize) {
   currentSchema = currentDialect === 'postgres' ? defineSchema || directSchema || null : null;
 }
 
-<<<<<<< HEAD
 function quoteIdentifier(identifier) {
   if (!identifier) {
     return '';
@@ -22,14 +21,13 @@ function quoteIdentifier(identifier) {
   const quoteChar = currentDialect === 'postgres' ? '"' : '`';
   return `${quoteChar}${String(identifier).replace(new RegExp(quoteChar, 'g'), quoteChar + quoteChar)}${quoteChar}`;
 }
-=======
+
 function createQuoteHelpers(sequelize) {
   const dialect = sequelize.getDialect();
   const quoteIdentifier =
     dialect === 'mysql'
       ? (identifier) => (identifier ? `\`${String(identifier).replace(/`/g, '``')}\`` : '')
       : (identifier) => (identifier ? `"${String(identifier).replace(/"/g, '""')}"` : '');
->>>>>>> ed875dd4ab4252a5050f15e4516a68a8721a4d09
 
   const qualifyColumn = (table, column) => {
     if (!table || !column) {
@@ -120,9 +118,6 @@ async function resolveJobColumnInfo(sequelize) {
 
   const buildColumnInfo = async () => {
     try {
-<<<<<<< HEAD
-      const columns = await fetchTableColumns(sequelize, 'jobs');
-=======
       if (dialect === 'postgres') {
         const describe = await sequelize
           .getQueryInterface()
@@ -144,26 +139,25 @@ async function resolveJobColumnInfo(sequelize) {
           categoryColumn: findColumn('category', 'job_category'),
           skillsColumn: findColumn('skillsRequired', 'skills'),
         };
+      } else {
+        const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
+          type: QueryTypes.SELECT,
+        });
+        const findColumn = buildColumnFinder(columns);
+
+        return {
+          createdColumn: findColumn('createdAt', 'created_at'),
+          jobTypeColumn: findColumn('type', 'job_type'),
+          experienceColumn: findColumn('experienceLevel', 'experience'),
+          applyUrlColumn: findColumn('applyUrl', 'link'),
+          locationTypeColumn: findColumn('locationType', 'location_type'),
+          isRemoteColumn: findColumn('isRemote', 'is_remote'),
+          notifySentColumn: findColumn('notify_sent', 'notifysent'),
+          notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
+          categoryColumn: findColumn('category', 'job_category'),
+          skillsColumn: findColumn('skillsRequired', 'skills'),
+        };
       }
-
-      const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
-        type: QueryTypes.SELECT,
-      });
->>>>>>> ed875dd4ab4252a5050f15e4516a68a8721a4d09
-      const findColumn = buildColumnFinder(columns);
-
-      return {
-        createdColumn: findColumn('createdAt', 'created_at'),
-        jobTypeColumn: findColumn('type', 'job_type'),
-        experienceColumn: findColumn('experienceLevel', 'experience'),
-        applyUrlColumn: findColumn('applyUrl', 'link'),
-        locationTypeColumn: findColumn('locationType', 'location_type'),
-        isRemoteColumn: findColumn('isRemote', 'is_remote'),
-        notifySentColumn: findColumn('notify_sent', 'notifysent'),
-        notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
-        categoryColumn: findColumn('category', 'job_category'),
-        skillsColumn: findColumn('skillsRequired', 'skills'),
-      };
     } catch (error) {
       return {
         createdColumn: 'createdAt',
@@ -206,9 +200,6 @@ async function resolveAiJobColumnInfo(sequelize) {
 
   const buildColumnInfo = async () => {
     try {
-<<<<<<< HEAD
-      const columns = await fetchTableColumns(sequelize, 'aijobs');
-=======
       if (dialect === 'postgres') {
         const describe = await sequelize
           .getQueryInterface()
@@ -217,6 +208,24 @@ async function resolveAiJobColumnInfo(sequelize) {
           raw: name,
           lower: name.toLowerCase(),
         }));
+        const findColumn = buildColumnFinder(columns);
+        return {
+          createdColumn: findColumn('created_at', 'createdAt'),
+          postedColumn: findColumn('posted_date', 'postedDate'),
+          jobTypeColumn: findColumn('job_type', 'jobType'),
+          remoteColumn: findColumn('remote', 'is_remote', 'isRemote'),
+          experienceColumn: findColumn('experience'),
+          applyUrlColumn: findColumn('job_url', 'applyUrl', 'link'),
+          locationTypeColumn: findColumn('location_type', 'job_type', 'type'),
+          notifySentColumn: findColumn('notify_sent', 'notifysent'),
+          notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
+          categoryColumn: findColumn('category', 'job_type'),
+          skillsColumn: findColumn('skills'),
+        };
+      } else {
+        const columns = await sequelize.query('SHOW COLUMNS FROM aijobs', {
+          type: QueryTypes.SELECT,
+        });
         const findColumn = buildColumnFinder(columns);
         return {
           createdColumn: findColumn('created_at', 'createdAt'),
