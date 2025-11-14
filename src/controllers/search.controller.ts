@@ -12,9 +12,9 @@ export async function searchJobs(req: Request, res: Response, next: NextFunction
     
     if (q) {
       where[Op.or] = [
-        { title: { [Op.like]: `%${q}%` } },
-        { description: { [Op.like]: `%${q}%` } },
-        { company: { [Op.like]: `%${q}%` } }
+        { title: { [Op.iLike]: `%${q}%` } },
+        { description: { [Op.iLike]: `%${q}%` } },
+        { company: { [Op.iLike]: `%${q}%` } }
       ];
       aiWhere[Op.or] = [
         { title: { [Op.iLike]: `%${q}%` } },
@@ -26,8 +26,22 @@ export async function searchJobs(req: Request, res: Response, next: NextFunction
     }
     
     if (location) {
-      where.location = { [Op.like]: `%${location}%` };
-      aiWhere.location = { [Op.iLike]: `%${location}%` };
+      const locationClause = {
+        [Op.or]: [
+          { location: { [Op.iLike]: `%${location}%` } },
+          { city: { [Op.iLike]: `%${location}%` } },
+          { state: { [Op.iLike]: `%${location}%` } },
+          { country: { [Op.iLike]: `%${location}%` } },
+        ],
+      };
+      if (!where[Op.and]) {
+        where[Op.and] = [];
+      }
+      where[Op.and].push(locationClause);
+
+      const aiLocationClauses = aiWhere[Op.or] || [];
+      aiLocationClauses.push({ location: { [Op.iLike]: `%${location}%` } });
+      aiWhere[Op.or] = aiLocationClauses;
     }
     
     if (type) {

@@ -30,12 +30,25 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
       if (isRemote === 'true' || isRemote === true) where.isRemote = true;
       if (isRemote === 'false' || isRemote === false) where.isRemote = false;
     }
-    if (location) where.location = { [Op.like]: `%${location}%` };
+    if (location) {
+      const locationClause = {
+        [Op.or]: [
+          { location: { [Op.iLike]: `%${location}%` } },
+          { city: { [Op.iLike]: `%${location}%` } },
+          { state: { [Op.iLike]: `%${location}%` } },
+          { country: { [Op.iLike]: `%${location}%` } },
+        ],
+      };
+      if (!where[Op.and]) {
+        where[Op.and] = [];
+      }
+      where[Op.and].push(locationClause);
+    }
     if (search) {
       where[Op.or] = [
-        { title: { [Op.like]: `%${search}%` } },
-        { company: { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
+        { title: { [Op.iLike]: `%${search}%` } },
+        { company: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
       ];
     }
 
@@ -53,12 +66,16 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
     // Query AI jobs with similar filters
     const aiWhere: any = {};
     if (type) aiWhere.job_type = type;
-    if (location) aiWhere.location = { [Op.like]: `%${location}%` };
+    if (location) {
+      const existingOr = aiWhere[Op.or] || [];
+      existingOr.push({ location: { [Op.iLike]: `%${location}%` } });
+      aiWhere[Op.or] = existingOr;
+    }
     if (search) {
       aiWhere[Op.or] = [
-        { title: { [Op.like]: `%${search}%` } },
-        { company: { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
+        { title: { [Op.iLike]: `%${search}%` } },
+        { company: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
       ];
     }
 

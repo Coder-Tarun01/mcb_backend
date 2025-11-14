@@ -176,6 +176,10 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
               { company: { [Op.iLike]: likePattern } },
               { description: { [Op.iLike]: likePattern } },
               { category: { [Op.iLike]: likePattern } },
+              { location: { [Op.iLike]: likePattern } },
+              { city: { [Op.iLike]: likePattern } },
+              { state: { [Op.iLike]: likePattern } },
+              { country: { [Op.iLike]: likePattern } },
             ],
           }
         : undefined,
@@ -209,6 +213,7 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
               { description: { [Op.iLike]: likePattern } },
               { skills: { [Op.iLike]: likePattern } },
               { job_type: { [Op.iLike]: likePattern } },
+              { location: { [Op.iLike]: likePattern } },
             ],
           }
         : undefined,
