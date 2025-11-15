@@ -34,7 +34,8 @@
     "telegram:test": "node scripts/test-telegram-webhook.js",
     "telegram:clean": "node scripts/clean-telegram-bot.js",
     "telegram:chat-ids": "node scripts/get-telegram-chat-ids.js",
-    "telegram:check": "node scripts/check-telegram-bot.js"
+    "telegram:check": "node scripts/check-telegram-bot.js",
+    "test:marketing-filtering": "node scripts/test-marketing-filtering.js"
   },
   "keywords": [],
   "author": "",
@@ -50,6 +51,7 @@
     "csv-parse": "^5.6.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "fuse.js": "^7.0.0",
     "handlebars": "^4.7.8",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
@@ -61,7 +63,6 @@
     "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.7",
-    "fuse.js": "^7.0.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^13.0.0"

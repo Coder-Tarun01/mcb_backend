@@ -112,7 +112,7 @@ function buildConfig() {
 
   return {
     enabled: toBoolean(process.env.MARKETING_EMAIL_ENABLED, true),
-    cronExpression: process.env.MARKETING_EMAIL_CRON || '*/30 * * * *',
+    cronExpression: process.env.MARKETING_EMAIL_CRON || '0 0 */3 * *',
     jobFetchLimit: Math.max(digestSize, toNumber(process.env.MARKETING_JOBS_FETCH_LIMIT, 100)),
     createdAfter,
     digestSize,

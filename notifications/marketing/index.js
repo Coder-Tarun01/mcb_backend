@@ -307,7 +307,16 @@ function buildPersonalizedDigests({ contacts, jobs, digestSize }) {
   const skippedContacts = [];
   const uniqueJobKeys = new Set();
 
+  console.log(`[marketing.digest] Building personalized digests for ${contacts.length} contact(s) from ${allJobs.length} job(s)`);
+
   for (const contact of contacts) {
+    const contactBranch = contact?.branch || 'N/A';
+    const contactExperience = contact?.experience || 'N/A';
+    const contactEmail = contact?.email || 'N/A';
+    
+    console.log(`[marketing.digest] Processing contact: ${contact.fullName || 'N/A'} (${contactEmail})`);
+    console.log(`[marketing.digest]   Branch: ${contactBranch}, Experience: ${contactExperience}`);
+
     const selection = selectJobsForContact(contact, {
       allJobs,
       fresherJobs: allJobs.filter(isFresherJob),
@@ -316,12 +325,18 @@ function buildPersonalizedDigests({ contacts, jobs, digestSize }) {
     });
 
     if (!selection || selection.length === 0) {
+      console.log(`[marketing.digest]   ❌ No matching jobs found - skipping contact`);
       skippedContacts.push(contact);
       continue;
     }
 
     const trimmed = selection.slice(0, normalizedLimit);
     contactJobsMap.set(contact.id, trimmed);
+
+    console.log(`[marketing.digest]   ✅ Selected ${trimmed.length} job(s) for this contact:`);
+    trimmed.forEach((job, index) => {
+      console.log(`[marketing.digest]     ${index + 1}. ${job.title || 'N/A'} @ ${job.company || 'N/A'} (${job.id})`);
+    });
 
     for (const job of trimmed) {
       if (!job || job.id === undefined || job.id === null) {
@@ -330,6 +345,8 @@ function buildPersonalizedDigests({ contacts, jobs, digestSize }) {
       uniqueJobKeys.add(`${job.source || 'jobs'}:${job.id}`);
     }
   }
+
+  console.log(`[marketing.digest] Summary: ${contactJobsMap.size} contact(s) will receive digests, ${skippedContacts.length} skipped, ${uniqueJobKeys.size} unique job(s) total`);
 
   return {
     contactsToSend: contacts.filter((contact) => contactJobsMap.has(contact.id)),
@@ -349,7 +366,9 @@ function selectJobsForContact(contact, context) {
   const preferFresher = isFresherRange(contactRange);
 
   const strategies = [];
+  const strategyNames = [];
 
+  // Strategy 1: Fresher jobs with both branch AND experience match (strictest for freshers)
   if (preferFresher && fresherJobs.length > 0) {
     strategies.push(() =>
       applyFilters(fresherJobs, {
@@ -357,49 +376,80 @@ function selectJobsForContact(contact, context) {
         experienceRange: contactRange,
       })
     );
+    strategyNames.push('fresher+branch+experience');
+
+    // Strategy 2: Fresher jobs with branch match only
     strategies.push(() =>
       applyFilters(fresherJobs, {
         branchTokens,
       })
     );
+    strategyNames.push('fresher+branch');
+
+    // Strategy 3: Fresher jobs with experience match only
     strategies.push(() =>
       applyFilters(fresherJobs, {
         experienceRange: contactRange,
       })
     );
-    strategies.push(() => [...fresherJobs]);
+    strategyNames.push('fresher+experience');
+
+    // Strategy 4: All fresher jobs (if no branch/experience filters)
+    if (branchTokens.length === 0 && !contactRange) {
+      strategies.push(() => [...fresherJobs]);
+      strategyNames.push('fresher-all');
+    }
   }
 
+  // Strategy 5: All jobs with both branch AND experience match (strictest)
   strategies.push(() =>
     applyFilters(allJobs, {
       branchTokens,
       experienceRange: contactRange,
     })
   );
-  strategies.push(() =>
-    applyFilters(allJobs, {
-      branchTokens,
-    })
-  );
+  strategyNames.push('all+branch+experience');
+
+  // Strategy 6: All jobs with branch match only
+  if (branchTokens.length > 0) {
+    strategies.push(() =>
+      applyFilters(allJobs, {
+        branchTokens,
+      })
+    );
+    strategyNames.push('all+branch');
+  }
+
+  // Strategy 7: All jobs with experience match only
   if (contactRange) {
     strategies.push(() =>
       applyFilters(allJobs, {
         experienceRange: contactRange,
       })
     );
+    strategyNames.push('all+experience');
   }
-  strategies.push(() => [...allJobs]);
 
-  for (const getCandidates of strategies) {
+  // REMOVED: Final fallback that sends all jobs to everyone
+  // This was causing same jobs to be sent to all users
+  // If no jobs match the user's profile, they should not receive any jobs
+
+  for (let i = 0; i < strategies.length; i++) {
+    const getCandidates = strategies[i];
+    const strategyName = strategyNames[i] || `strategy-${i + 1}`;
+    
     if (typeof getCandidates !== 'function') {
       continue;
     }
+    
     const candidates = uniqueJobs(getCandidates()).filter(Boolean);
     if (candidates.length > 0) {
+      console.log(`[marketing.digest]   Match found using strategy: ${strategyName} (${candidates.length} candidate(s))`);
       return candidates.slice(0, digestLimit);
     }
   }
 
+  console.log(`[marketing.digest]   No matches found after trying ${strategies.length} strategy/strategies`);
   return [];
 }
 
