@@ -11,14 +11,14 @@ export async function searchJobs(req: Request, res: Response, next: NextFunction
     
     if (q) {
       where[Op.or] = [
-        { title: { [Op.like]: `%${q}%` } },
-        { description: { [Op.like]: `%${q}%` } },
-        { company: { [Op.like]: `%${q}%` } }
+        { title: { [Op.iLike]: `%${q}%` } },
+        { description: { [Op.iLike]: `%${q}%` } },
+        { company: { [Op.iLike]: `%${q}%` } }
       ];
     }
     
     if (location) {
-      where.location = { [Op.like]: `%${location}%` };
+      where.location = { [Op.iLike]: `%${location}%` };
     }
     
     if (type) {
@@ -124,7 +124,7 @@ export async function getRecommendedJobs(req: Request, res: Response, next: Next
 
     if (userSkills.length > 0) {
       where[Op.or] = userSkills.map(skill => ({
-        description: { [Op.like]: `%${skill}%` }
+        description: { [Op.iLike]: `%${skill}%` }
       }));
     }
 
@@ -150,7 +150,7 @@ export async function autocompleteJobTitles(req: Request, res: Response, next: N
 
     const jobs = await Job.findAll({
       where: {
-        title: { [Op.like]: `%${q}%` }
+        title: { [Op.iLike]: `%${q}%` }
       },
       attributes: ['title'],
       group: ['title'],
@@ -174,7 +174,7 @@ export async function autocompleteCompanies(req: Request, res: Response, next: N
 
     const jobs = await Job.findAll({
       where: {
-        company: { [Op.like]: `%${q}%` }
+        company: { [Op.iLike]: `%${q}%` }
       },
       attributes: ['company'],
       group: ['company'],
@@ -198,7 +198,7 @@ export async function autocompleteLocations(req: Request, res: Response, next: N
 
     const jobs = await Job.findAll({
       where: {
-        location: { [Op.like]: `%${q}%` }
+        location: { [Op.iLike]: `%${q}%` }
       },
       attributes: ['location'],
       group: ['location'],
@@ -227,7 +227,7 @@ export async function autocompleteSearch(req: Request, res: Response, next: Next
     const [jobs, companies, locations] = await Promise.all([
       Job.findAll({
         where: {
-          title: { [Op.like]: `%${q}%` }
+          title: { [Op.iLike]: `%${q}%` }
         },
         attributes: ['id', 'title', 'company', 'location', 'type'],
         limit,
@@ -235,7 +235,7 @@ export async function autocompleteSearch(req: Request, res: Response, next: Next
       }),
       Job.findAll({
         where: {
-          company: { [Op.like]: `%${q}%` }
+          company: { [Op.iLike]: `%${q}%` }
         },
         attributes: ['company'],
         group: ['company'],
@@ -244,7 +244,7 @@ export async function autocompleteSearch(req: Request, res: Response, next: Next
       }),
       Job.findAll({
         where: {
-          location: { [Op.like]: `%${q}%` }
+          location: { [Op.iLike]: `%${q}%` }
         },
         attributes: ['location'],
         group: ['location'],

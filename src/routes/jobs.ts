@@ -2,11 +2,17 @@ import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { cached } from '../middleware/cache';
 import { rateLimit } from '../middleware/rateLimiter';
-import { listJobs, getJob, createJob, updateJob, deleteJob, getEmployerJobs, recordApplyClick } from '../controllers/jobs.controller';
+import { listJobs, getJob, createJob, updateJob, deleteJob, getEmployerJobs, recordApplyClick, getHomePageJobs } from '../controllers/jobs.controller';
 
 const router = Router();
 
 // Public routes (no authentication required)
+router.get(
+  '/home-jobs',
+  rateLimit({ limit: 30, windowMs: 10_000 }),
+  cached(() => 'jobs:home', 10, getHomePageJobs)
+);
+
 router.get(
   '/',
   rateLimit({ limit: 30, windowMs: 10_000 }),

@@ -18,6 +18,7 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
       search,
       type,
       category,
+      experience,
       isRemote,
       location
     } = req.query as any;
@@ -28,17 +29,29 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
     // Build Sequelize where clause
     const where: any = {};
     if (type) where.type = type;
-    if (category) where.category = category;
+    
+    // Handle category filter (government needs special handling)
+    if (category) {
+      const categoryLower = String(category).toLowerCase();
+      if (categoryLower === 'government' || categoryLower === 'public sector') {
+        // Government filter will be applied after merging (to catch AI jobs too)
+        // Don't filter at DB level for government to get all potential matches
+        // The filtering will happen after merging both tables
+      } else {
+        where.category = category;
+      }
+    }
+    
     if (typeof isRemote !== 'undefined') {
       if (isRemote === 'true' || isRemote === true) where.isRemote = true;
       if (isRemote === 'false' || isRemote === false) where.isRemote = false;
     }
-    if (location) where.location = { [Op.like]: `%${location}%` };
+    if (location) where.location = { [Op.iLike]: `%${location}%` };
     if (search) {
       where[Op.or] = [
-        { title: { [Op.like]: `%${search}%` } },
-        { company: { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
+        { title: { [Op.iLike]: `%${search}%` } },
+        { company: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
       ];
     }
 
@@ -56,12 +69,21 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
     // Query AI jobs with similar filters
     const aiWhere: any = {};
     if (type) aiWhere.job_type = type;
-    if (location) aiWhere.location = { [Op.like]: `%${location}%` };
+    
+    // Handle remote filter for AI jobs (they don't have isRemote field)
+    if (typeof isRemote !== 'undefined' && (isRemote === 'true' || isRemote === true)) {
+      // For remote, check if location contains 'remote' (AI jobs don't have isRemote field)
+      aiWhere.location = { [Op.iLike]: `%remote%` };
+    } else if (location) {
+      // Only apply location filter if not filtering for remote
+      aiWhere.location = { [Op.iLike]: `%${location}%` };
+    }
+    
     if (search) {
       aiWhere[Op.or] = [
-        { title: { [Op.like]: `%${search}%` } },
-        { company: { [Op.like]: `%${search}%` } },
-        { description: { [Op.like]: `%${search}%` } },
+        { title: { [Op.iLike]: `%${search}%` } },
+        { company: { [Op.iLike]: `%${search}%` } },
+        { description: { [Op.iLike]: `%${search}%` } },
       ];
     }
 
@@ -81,6 +103,27 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
     // Transform Employer DB jobs to frontend-friendly shape
     const employerJobs = rows.map((job: any) => {
       const jobData = job.toJSON ? job.toJSON() : job;
+      
+      // Parse experience level to extract min experience
+      let expMin: number | null = null;
+      let expMax: number | null = null;
+      if (jobData.experienceLevel) {
+        const expStr = String(jobData.experienceLevel).toLowerCase();
+        if (expStr.includes('fresher') || expStr.includes('entry') || expStr === '0') {
+          expMin = 0;
+          expMax = 1;
+        } else {
+          // Try to extract numbers from experience string (e.g., "2-5 years" -> min: 2, max: 5)
+          const numbers = expStr.match(/\d+/g);
+          if (numbers && numbers.length > 0) {
+            expMin = parseInt(numbers[0], 10);
+            if (numbers.length > 1) {
+              expMax = parseInt(numbers[1], 10);
+            }
+          }
+        }
+      }
+      
       return {
         id: jobData.id?.toString() || '',
         title: jobData.title || '',
@@ -90,7 +133,7 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
         jobType: jobData.type || null,
         description: jobData.description || jobData.jobDescription || null,
         skills: jobData.skillsRequired || [],
-        experience: jobData.experienceLevel ? { level: jobData.experienceLevel } : null,
+        experience: (expMin !== null || expMax !== null) ? { min: expMin, max: expMax } : null,
         experienceLevel: jobData.experienceLevel || null,
         postedDate: jobData.createdAt || null,
         jobUrl: jobData.applyUrl || null,
@@ -117,8 +160,28 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
       if (j.skills) {
         skillsArray = String(j.skills).split(',').map((s: string) => s.trim()).filter(Boolean);
       }
-      // Parse experience string into level
+      
+      // Parse experience string to extract min/max
+      let expMin: number | null = null;
+      let expMax: number | null = null;
       const experienceLevel = j.experience || null;
+      if (experienceLevel) {
+        const expStr = String(experienceLevel).toLowerCase();
+        if (expStr.includes('fresher') || expStr.includes('entry') || expStr === '0') {
+          expMin = 0;
+          expMax = 1;
+        } else {
+          // Try to extract numbers from experience string
+          const numbers = expStr.match(/\d+/g);
+          if (numbers && numbers.length > 0) {
+            expMin = parseInt(numbers[0], 10);
+            if (numbers.length > 1) {
+              expMax = parseInt(numbers[1], 10);
+            }
+          }
+        }
+      }
+      
       return {
         id: String(j.id),
         title: j.title || '',
@@ -128,7 +191,7 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
         jobType: j.job_type || null,
         description: j.description || null,
         skills: skillsArray,
-        experience: undefined,
+        experience: (expMin !== null || expMax !== null) ? { min: expMin, max: expMax } : null,
         experienceLevel,
         postedDate: j.posted_date || null,
         jobUrl: j.job_url || null,
@@ -140,18 +203,109 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
         displaySalary: 'Salary not specified',
         requirements: [],
         category: null,
-        isRemote: false,
+        isRemote: (j.location && String(j.location).toLowerCase().includes('remote')) || false,
       };
     });
 
     // Merge, sort by postedDate/createdAt desc, then paginate
-    const merged = [...employerJobs, ...aiTransformed].sort((a: any, b: any) => {
+    let merged = [...employerJobs, ...aiTransformed].sort((a: any, b: any) => {
       const da = a.postedDate ? new Date(a.postedDate).getTime() : 0;
       const db = b.postedDate ? new Date(b.postedDate).getTime() : 0;
       return db - da;
     });
 
-    const totalItems = count + aiTransformed.length; // approximate; for exact, do count query on aijobs
+    // Apply isRemote filter if provided (after merging both tables - to catch all remote jobs)
+    if (typeof isRemote !== 'undefined' && (isRemote === 'true' || isRemote === true)) {
+      merged = merged.filter((job: any) => 
+        job.isRemote === true || 
+        (job.location && job.location.toLowerCase().includes('remote')) ||
+        (job.type && job.type.toLowerCase() === 'remote')
+      );
+    }
+
+    // Apply experience filter if provided (after merging both tables, BEFORE pagination)
+    if (experience) {
+      const experienceLower = String(experience).toLowerCase();
+      if (experienceLower === 'fresher') {
+        merged = merged.filter((job: any) => {
+          const typeLower = job.type ? String(job.type).toLowerCase() : '';
+          const expLower = job.experienceLevel ? String(job.experienceLevel).toLowerCase() : '';
+          const expMin = job.experience && typeof job.experience === 'object' ? job.experience.min : null;
+          
+          // Strict fresher filter: Only 0-1 year experience
+          // Check if type explicitly mentions fresher
+          if (typeLower.includes('fresher') || typeLower.includes('entry')) {
+            return true;
+          }
+          
+          // Check if experienceLevel explicitly mentions fresher
+          if (expLower.includes('fresher') || expLower.includes('entry')) {
+            return true;
+          }
+          
+          // Check if experience.min === 0 (0 years experience)
+          if (expMin === 0) {
+            return true;
+          }
+          
+          // If experience is null but type doesn't say fresher, exclude it (too loose)
+          return false;
+        });
+      } else if (experienceLower === 'experienced') {
+        merged = merged.filter((job: any) => {
+          const typeLower = job.type ? String(job.type).toLowerCase() : '';
+          const expLower = job.experienceLevel ? String(job.experienceLevel).toLowerCase() : '';
+          const expMin = job.experience && typeof job.experience === 'object' ? job.experience.min : null;
+          
+          // Exclude fresher/entry level
+          if (
+            typeLower.includes('fresher') ||
+            typeLower.includes('entry') ||
+            expLower.includes('fresher') ||
+            expLower.includes('entry')
+          ) {
+            return false;
+          }
+          
+          // Exclude if experience is 0
+          if (expMin === 0) {
+            return false;
+          }
+          
+          // Include if experience > 0 or type is experienced
+          return (
+            typeLower === 'experienced' ||
+            (expMin !== null && expMin > 0) ||
+            (expMin === null && !typeLower.includes('fresher') && typeLower !== '')
+          );
+        });
+      }
+    }
+
+    // Apply category filter for government (after merging - to catch AI jobs too)
+    if (category) {
+      const categoryLower = String(category).toLowerCase();
+      if (categoryLower === 'government' || categoryLower === 'public sector') {
+        merged = merged.filter((job: any) => {
+          const jobCategoryLower = job.category ? String(job.category).toLowerCase() : '';
+          const companyLower = job.company ? String(job.company).toLowerCase() : '';
+          const titleLower = job.title ? String(job.title).toLowerCase() : '';
+          
+          return (
+            jobCategoryLower === 'government' ||
+            jobCategoryLower === 'public sector' ||
+            companyLower.includes('government') ||
+            companyLower.includes('govt') ||
+            companyLower.includes('gov') ||
+            companyLower.includes('public sector') ||
+            titleLower.includes('government') ||
+            titleLower.includes('govt')
+          );
+        });
+      }
+    }
+
+    const totalItems = merged.length;
     const start = calculatedOffset;
     const end = start + calculatedLimit;
     const paged = merged.slice(start, end);
@@ -811,6 +965,300 @@ export async function recordApplyClick(req: Request, res: Response, next: NextFu
     res.json({ success: true, message: 'Click recorded successfully' });
   } catch (e) {
     console.error('Error recording apply click:', e);
+    next(e);
+  }
+}
+
+/**
+ * Get Home Page Jobs API
+ * Fetches jobs from two tables (jobs and aijobs) and returns categorized results
+ * Categories: Remote, Fresher, Government, Experienced
+ */
+export async function getHomePageJobs(req: Request, res: Response, next: NextFunction) {
+  try {
+    // Fetch from both tables separately (no joins)
+    const [employerJobs, aiJobs] = await Promise.all([
+      Job.findAll({
+        attributes: {
+          exclude: ['slug', 'previousSlugs']
+        },
+        order: [['createdAt', 'DESC']],
+        limit: 100 // Fetch more for filtering
+      }),
+      AiJob.findAll({
+        order: [['posted_date', 'DESC']],
+        limit: 100 // Fetch more for filtering
+      })
+    ]);
+
+    // Normalize employer jobs to common format
+    const normalizedEmployerJobs = employerJobs.map((job: any) => {
+      const jobData = job.toJSON ? job.toJSON() : job;
+      return {
+        id: jobData.id?.toString() || '',
+        title: jobData.title || '',
+        company: jobData.company || '',
+        location: jobData.location || null,
+        type: jobData.type || null,
+        category: jobData.category || null,
+        isRemote: !!jobData.isRemote,
+        description: jobData.description || jobData.jobDescription || null,
+        experienceLevel: jobData.experienceLevel || null,
+        experience: jobData.experienceLevel ? {
+          min: jobData.experienceLevel.toLowerCase().includes('fresher') || jobData.experienceLevel.toLowerCase().includes('entry') ? 0 : 1,
+          max: null
+        } : null,
+        skills: jobData.skillsRequired || [],
+        postedDate: jobData.createdAt || null,
+        createdAt: jobData.createdAt || null,
+        salary: (jobData.minSalary || jobData.maxSalary) ? {
+          min: jobData.minSalary || null,
+          max: jobData.maxSalary || null,
+          currency: jobData.salaryCurrency || 'INR'
+        } : null,
+        jobUrl: jobData.applyUrl || null,
+        _source: 'employer'
+      };
+    });
+
+    // Normalize AI jobs to common format
+    const normalizedAiJobs = aiJobs.map((j: any) => {
+      const aiData = j.toJSON ? j.toJSON() : j;
+      let skillsArray: string[] = [];
+      if (aiData.skills) {
+        skillsArray = String(aiData.skills).split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+      
+      // Parse experience string
+      let experienceNum = null;
+      if (aiData.experience) {
+        const expStr = String(aiData.experience).toLowerCase();
+        if (expStr.includes('fresher') || expStr.includes('entry') || expStr === '0') {
+          experienceNum = 0;
+        } else {
+          const match = expStr.match(/(\d+)/);
+          if (match) experienceNum = parseInt(match[1], 10);
+        }
+      }
+
+      return {
+        id: String(aiData.id || ''),
+        title: aiData.title || '',
+        company: aiData.company || '',
+        location: aiData.location || null,
+        type: aiData.job_type || null,
+        category: null, // AI jobs don't have category field
+        isRemote: (aiData.location && String(aiData.location).toLowerCase().includes('remote')) || false,
+        description: aiData.description || null,
+        experienceLevel: aiData.experience || null,
+        experience: experienceNum !== null ? { min: experienceNum, max: null } : null,
+        skills: skillsArray,
+        postedDate: aiData.posted_date || null,
+        createdAt: aiData.posted_date || null,
+        salary: null,
+        jobUrl: aiData.job_url || null,
+        _source: 'ai'
+      };
+    });
+
+    // Merge all jobs
+    const allJobs = [...normalizedEmployerJobs, ...normalizedAiJobs];
+
+    // Helper function to filter by category
+    const filterJobs = (category: string, jobs: any[]): any[] => {
+      let filtered: any[] = [];
+
+      switch (category) {
+        case 'remote':
+          filtered = jobs.filter(job => 
+            job.isRemote === true || 
+            (job.location && String(job.location).toLowerCase().includes('remote')) ||
+            (job.type && String(job.type).toLowerCase() === 'remote')
+          );
+          break;
+
+        case 'fresher':
+          filtered = jobs.filter(job => {
+            const typeLower = job.type ? String(job.type).toLowerCase() : '';
+            const expLower = job.experienceLevel ? String(job.experienceLevel).toLowerCase() : '';
+            const expMin = job.experience?.min;
+            
+            return (
+              typeLower.includes('fresher') ||
+              typeLower.includes('entry') ||
+              expLower.includes('fresher') ||
+              expLower.includes('entry') ||
+              expMin === 0 ||
+              expMin === null
+            );
+          });
+          break;
+
+        case 'government':
+          filtered = jobs.filter(job => {
+            const companyLower = job.company ? String(job.company).toLowerCase() : '';
+            const titleLower = job.title ? String(job.title).toLowerCase() : '';
+            const categoryLower = job.category ? String(job.category).toLowerCase() : '';
+            
+            return (
+              categoryLower === 'government' ||
+              categoryLower === 'public sector' ||
+              companyLower.includes('government') ||
+              companyLower.includes('govt') ||
+              companyLower.includes('gov') ||
+              companyLower.includes('public sector') ||
+              titleLower.includes('government') ||
+              titleLower.includes('govt')
+            );
+          });
+          break;
+
+        case 'experienced':
+          filtered = jobs.filter(job => {
+            const typeLower = job.type ? String(job.type).toLowerCase() : '';
+            const expLower = job.experienceLevel ? String(job.experienceLevel).toLowerCase() : '';
+            const expMin = job.experience?.min;
+            
+            // Exclude fresher/entry level
+            if (
+              typeLower.includes('fresher') ||
+              typeLower.includes('entry') ||
+              expLower.includes('fresher') ||
+              expLower.includes('entry')
+            ) {
+              return false;
+            }
+            
+            // Include if experience > 0 or type is experienced
+            return (
+              typeLower === 'experienced' ||
+              (expMin !== null && expMin > 0) ||
+              (expMin === null && !typeLower.includes('fresher'))
+            );
+          });
+          break;
+      }
+
+      return filtered;
+    };
+
+    // Helper function to sort by createdAt (descending) and limit
+    const sortAndLimit = (jobs: any[], limit: number = 3): any[] => {
+      return jobs
+        .sort((a, b) => {
+          const dateA = a.createdAt || a.postedDate ? new Date(a.createdAt || a.postedDate).getTime() : 0;
+          const dateB = b.createdAt || b.postedDate ? new Date(b.createdAt || b.postedDate).getTime() : 0;
+          return dateB - dateA; // Descending
+        })
+        .slice(0, limit);
+    };
+
+    // Fetch jobs for each category with fallback
+    const categories = ['remote', 'fresher', 'government', 'experienced'];
+    const result: any = {};
+
+    for (const category of categories) {
+      let categoryJobs = filterJobs(category, allJobs);
+      categoryJobs = sortAndLimit(categoryJobs, 3);
+
+      // Fallback: if no results, fetch all and filter again
+      if (categoryJobs.length === 0) {
+        // Fetch more jobs from both tables
+        const [fallbackEmployerJobs, fallbackAiJobs] = await Promise.all([
+          Job.findAll({
+            attributes: {
+              exclude: ['slug', 'previousSlugs']
+            },
+            order: [['createdAt', 'DESC']],
+            limit: 500
+          }),
+          AiJob.findAll({
+            order: [['posted_date', 'DESC']],
+            limit: 500
+          })
+        ]);
+
+        // Normalize fallback jobs (same as above)
+        const normalizedFallbackEmployer = fallbackEmployerJobs.map((job: any) => {
+          const jobData = job.toJSON ? job.toJSON() : job;
+          return {
+            id: jobData.id?.toString() || '',
+            title: jobData.title || '',
+            company: jobData.company || '',
+            location: jobData.location || null,
+            type: jobData.type || null,
+            category: jobData.category || null,
+            isRemote: !!jobData.isRemote,
+            description: jobData.description || jobData.jobDescription || null,
+            experienceLevel: jobData.experienceLevel || null,
+            experience: jobData.experienceLevel ? {
+              min: jobData.experienceLevel.toLowerCase().includes('fresher') || jobData.experienceLevel.toLowerCase().includes('entry') ? 0 : 1,
+              max: null
+            } : null,
+            skills: jobData.skillsRequired || [],
+            postedDate: jobData.createdAt || null,
+            createdAt: jobData.createdAt || null,
+            salary: (jobData.minSalary || jobData.maxSalary) ? {
+              min: jobData.minSalary || null,
+              max: jobData.maxSalary || null,
+              currency: jobData.salaryCurrency || 'INR'
+            } : null,
+            jobUrl: jobData.applyUrl || null,
+            _source: 'employer'
+          };
+        });
+
+        const normalizedFallbackAi = fallbackAiJobs.map((j: any) => {
+          const aiData = j.toJSON ? j.toJSON() : j;
+          let skillsArray: string[] = [];
+          if (aiData.skills) {
+            skillsArray = String(aiData.skills).split(',').map((s: string) => s.trim()).filter(Boolean);
+          }
+          
+          let experienceNum = null;
+          if (aiData.experience) {
+            const expStr = String(aiData.experience).toLowerCase();
+            if (expStr.includes('fresher') || expStr.includes('entry') || expStr === '0') {
+              experienceNum = 0;
+            } else {
+              const match = expStr.match(/(\d+)/);
+              if (match) experienceNum = parseInt(match[1], 10);
+            }
+          }
+
+          return {
+            id: String(aiData.id || ''),
+            title: aiData.title || '',
+            company: aiData.company || '',
+            location: aiData.location || null,
+            type: aiData.job_type || null,
+            category: null,
+            isRemote: (aiData.location && String(aiData.location).toLowerCase().includes('remote')) || false,
+            description: aiData.description || null,
+            experienceLevel: aiData.experience || null,
+            experience: experienceNum !== null ? { min: experienceNum, max: null } : null,
+            skills: skillsArray,
+            postedDate: aiData.posted_date || null,
+            createdAt: aiData.posted_date || null,
+            salary: null,
+            jobUrl: aiData.job_url || null,
+            _source: 'ai'
+          };
+        });
+
+        const allFallbackJobs = [...normalizedFallbackEmployer, ...normalizedFallbackAi];
+        categoryJobs = filterJobs(category, allFallbackJobs);
+        categoryJobs = sortAndLimit(categoryJobs, 3);
+      }
+
+      // Clean up _source field before sending response
+      categoryJobs = categoryJobs.map(({ _source, ...job }) => job);
+      result[category] = categoryJobs;
+    }
+
+    res.json(result);
+  } catch (e) {
+    console.error('Error fetching home page jobs:', e);
     next(e);
   }
 }
