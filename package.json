@@ -28,7 +28,13 @@
     "docker:stop": "docker-compose -f docker-compose.prod.yml down",
     "logs": "docker-compose -f docker-compose.prod.yml logs -f",
     "backup:db": "node scripts/backup-database.js",
-    "restore:db": "node scripts/restore-database.js"
+    "restore:db": "node scripts/restore-database.js",
+    "telegram:reset": "node scripts/reset-telegram-bot.js",
+    "telegram:set": "node scripts/set-telegram-webhook.js",
+    "telegram:test": "node scripts/test-telegram-webhook.js",
+    "telegram:clean": "node scripts/clean-telegram-bot.js",
+    "telegram:chat-ids": "node scripts/get-telegram-chat-ids.js",
+    "telegram:check": "node scripts/check-telegram-bot.js"
   },
   "keywords": [],
   "author": "",
@@ -38,6 +44,7 @@
     "@types/aws-sdk": "^0.0.42",
     "@types/nodemailer": "^7.0.2",
     "aws-sdk": "^2.1692.0",
+    "axios": "^1.13.2",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "csv-parse": "^5.6.0",

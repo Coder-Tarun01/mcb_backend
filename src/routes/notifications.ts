@@ -16,6 +16,7 @@ import {
   createNotification
 } from '../controllers/notifications.controller';
 import { sequelize } from '../models';
+import { handleTelegramWebhook } from '../controllers/telegram.controller';
 
 const jobFetcher = require('../../notifications/email/jobFetcher') as any;
 const emailNotifications = require('../../notifications/email');
@@ -493,6 +494,26 @@ router.get(
   })
 );
 
+router.get(
+  '/marketing/summary',
+  requireAdminKey,
+  rateLimit({
+    limit: 20,
+    windowMs: 10_000,
+    onLimitReached: (req) => {
+      console.warn(`[RateLimit] /api/notifications/marketing/summary exceeded by ${req.ip}`);
+    },
+  }),
+  cached('notifications:marketing:summary', 5, async (req: Request, res: Response) => {
+    if (!marketingController || typeof marketingController.summary !== 'function') {
+      res.status(501).json({ success: false, error: 'Marketing notifications are not configured' });
+      return;
+    }
+
+    await marketingController.summary(req, res);
+  })
+);
+
 router.post(
   '/marketing/trigger',
   requireAdminKey,
@@ -512,8 +533,14 @@ router.post(
     await marketingController.trigger(req, res);
     purgeCache('notifications:jobs:freshers*');
     purgeCache('notifications:marketing:health');
+    purgeCache('notifications:marketing:summary');
   }
 );
+
+router.post('/telegram/webhook', handleTelegramWebhook);
+router.get('/telegram/webhook', (_req: Request, res: Response) => {
+  res.json({ ok: true });
+});
 
 router.get(
   '/marketing/contacts',

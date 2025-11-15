@@ -9,10 +9,24 @@ module.exports = {
       }
     };
 
+    // Add indexes to 'jobs' table
     await addIndexIfNotExists('jobs', ['created_at'], { name: 'jobs_created_at_idx' });
     await addIndexIfNotExists('jobs', ['type'], { name: 'jobs_type_idx' });
     await addIndexIfNotExists('jobs', ['notify_sent'], { name: 'jobs_notify_sent_idx' });
+
+    // Add indexes to 'aijobs' table
     await addIndexIfNotExists('aijobs', ['created_at'], { name: 'aijobs_created_at_idx' });
+    await addIndexIfNotExists('aijobs', ['posted_date'], { name: 'aijobs_posted_date_idx' });
+    await addIndexIfNotExists('aijobs', ['job_type'], { name: 'aijobs_job_type_idx' });
+    await addIndexIfNotExists('aijobs', ['notify_sent'], { name: 'aijobs_notify_sent_idx' });
+
+    // Add index to marketing_contacts for email for faster lookups
+    try {
+      await addIndexIfNotExists('marketing_contacts', ['email'], { name: 'marketing_contacts_email_idx', unique: true });
+    } catch (error) {
+      // Log error but don't fail migration if table doesn't exist or index creation fails
+      console.warn('Could not add index to marketing_contacts (table may not exist):', error.message);
+    }
   },
 
   down: async (queryInterface) => {
@@ -28,5 +42,14 @@ module.exports = {
     await dropIndexIfExists('jobs', 'jobs_type_idx');
     await dropIndexIfExists('jobs', 'jobs_notify_sent_idx');
     await dropIndexIfExists('aijobs', 'aijobs_created_at_idx');
+    await dropIndexIfExists('aijobs', 'aijobs_posted_date_idx');
+    await dropIndexIfExists('aijobs', 'aijobs_job_type_idx');
+    await dropIndexIfExists('aijobs', 'aijobs_notify_sent_idx');
+    
+    try {
+      await dropIndexIfExists('marketing_contacts', 'marketing_contacts_email_idx');
+    } catch (error) {
+      console.warn('Could not remove index from marketing_contacts:', error.message);
+    }
   },
 };
