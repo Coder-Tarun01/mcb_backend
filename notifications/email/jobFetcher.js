@@ -4,6 +4,7 @@ const { QueryTypes } = require('sequelize');
 let cachedModels;
 let cachedJobColumnInfo;
 let subscriberTableReady;
+let cachedQuoteHelpers;
 
 function loadModels() {
   if (cachedModels) {
@@ -44,6 +45,40 @@ function getSequelize() {
     throw new Error('Sequelize instance not found on loaded models module');
   }
   return models.sequelize;
+}
+
+function getQuoteHelpers() {
+  if (cachedQuoteHelpers) {
+    return cachedQuoteHelpers;
+  }
+
+  const sequelize = getSequelize();
+  const queryGenerator = sequelize.getQueryInterface().queryGenerator;
+  const quoteIdentifier = (identifier) => {
+    if (!identifier) {
+      return identifier;
+    }
+    if (identifier.includes('.')) {
+      return identifier
+        .split('.')
+        .map((part) => quoteIdentifier(part))
+        .join('.');
+    }
+    const trimmed = String(identifier).replace(/^["`]|["`]$/g, '');
+    return queryGenerator.quoteIdentifier(trimmed);
+  };
+
+  cachedQuoteHelpers = {
+    quoteIdentifier,
+    quoteTable: (tableName) => queryGenerator.quoteTable(tableName),
+  };
+
+  return cachedQuoteHelpers;
+}
+
+function quoteIfNeeded(identifier) {
+  const { quoteIdentifier } = getQuoteHelpers();
+  return quoteIdentifier(identifier);
 }
 
 async function inspectJobColumns() {

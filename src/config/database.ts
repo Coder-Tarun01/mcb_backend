@@ -29,6 +29,7 @@ const inferDialect = (): Dialect => {
 };
 
 const dialect = inferDialect();
+const schema = process.env.DB_SCHEMA || 'public';
 
 const defineOptions: NonNullable<Options['define']> = {
   timestamps: true,
@@ -40,8 +41,8 @@ if (dialect === 'mysql') {
   defineOptions.collate = 'utf8mb4_unicode_ci';
 }
 
-if (dialect === 'postgres' && process.env.DB_SCHEMA) {
-  defineOptions.schema = process.env.DB_SCHEMA;
+if (dialect === 'postgres' && schema) {
+  defineOptions.schema = schema;
 }
 
 const dbSsl = process.env.DB_SSL;
@@ -63,6 +64,10 @@ if (dialect === 'mysql') {
   });
 }
 
+if (dialect === 'postgres' && schema) {
+  dialectOptions.searchPath = schema;
+}
+
 if (shouldUseSsl) {
   dialectOptions.ssl = {
     require: true,
@@ -80,16 +85,17 @@ const sequelizeOptions: Options = {
       (dialect === 'postgres' ? '5432' : '3306'),
     10
   ),
-  database: process.env.DB_NAME || 'mycareerbuild',
+  database: process.env.DB_NAME || (dialect === 'postgres' ? 'mcb' : 'mycareerbuild'),
   username: process.env.DB_USER || (dialect === 'postgres' ? 'postgres' : 'root'),
-  password: process.env.DB_PASSWORD || (dialect === 'postgres' ? 'postgres' : 'secret'),
+  password: process.env.DB_PASSWORD || (dialect === 'postgres' ? 'secret' : 'secret'),
   logging: isDevelopment ? console.log : false,
   pool: {
     max: isProduction ? 10 : 5,
     min: 0,
     acquire: 60000,
     idle: 20000,
-    evict: 1000
+    evict: 1000,
+    handleDisconnects: true
   },
   // Retry policy to mitigate transient network issues
   retry: {
@@ -118,10 +124,13 @@ export const testConnection = async (): Promise<void> => {
     const defaultPort = dialect === 'postgres' ? '5432' : '3306';
     console.log(`✅ ${readableDialect} database connected successfully`);
     console.log(
-      `📊 Database: ${process.env.DB_NAME || 'mycareerbuild'}@${
+      `📊 Database: ${process.env.DB_NAME || (dialect === 'postgres' ? 'mcb' : 'mycareerbuild')}@${
         process.env.DB_HOST || 'localhost'
       }:${process.env.DB_PORT || defaultPort}`
     );
+    if (dialect === 'postgres') {
+      console.log(`📁 Schema: ${schema}`);
+    }
   } catch (error) {
     const readableDialect =
       dialect === 'postgres'

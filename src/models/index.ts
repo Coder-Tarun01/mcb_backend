@@ -1,6 +1,4 @@
-import { sequelize as sequelizeInstance, testConnection } from '../config/database';
-export const sequelize = sequelizeInstance;
-export { testConnection };
+export { sequelize, testConnection } from './sequelize';
 
 // Import models
 import { User } from './User';

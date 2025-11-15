@@ -4,32 +4,25 @@ import nodemailer from 'nodemailer';
 
 // Email configuration (read from .env - do NOT hardcode credentials)
 // Expected env vars (as provided): EMAIL_HOST, EMAIL_PORT, EMAIL_SECURE, EMAIL_USER, EMAIL_PASS, FROM_DOMAIN
-const emailHost = process.env.EMAIL_HOST || 'smtp.gmail.com';
-const emailPort = parseInt(process.env.EMAIL_PORT || '465', 10);
-const envSecure = typeof process.env.EMAIL_SECURE !== 'undefined' ? process.env.EMAIL_SECURE === 'true' : undefined;
-const secure = typeof envSecure !== 'undefined' ? envSecure : emailPort === 465;
-const emailUser = process.env.EMAIL_USER || '';
-const emailPass = process.env.EMAIL_PASS || '';
+// Also supports: SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS (for compatibility)
+let emailHost = process.env.EMAIL_HOST || process.env.SMTP_HOST || 'mail.mycareerbuild.com';
+
+// Fix common hostname mistakes
+if (emailHost === 'mail.gmail.com') {
+  console.warn('⚠️  Invalid SMTP host "mail.gmail.com" detected. Correcting to "smtp.gmail.com"');
+  emailHost = 'smtp.gmail.com';
+}
+
+const emailPort = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '25', 10);
+const envSecure = typeof process.env.EMAIL_SECURE !== 'undefined' ? process.env.EMAIL_SECURE === 'true' : 
+                  typeof process.env.SMTP_SECURE !== 'undefined' ? process.env.SMTP_SECURE === 'true' : undefined;
+const secure = typeof envSecure !== 'undefined' ? envSecure : (emailPort === 465);
+const emailUser = process.env.EMAIL_USER || process.env.SMTP_USER || '';
+const emailPass = process.env.EMAIL_PASS || process.env.SMTP_PASS || '';
 const fromDomain = process.env.FROM_DOMAIN || 'mycareerbuild.com';
-const emailDebug = process.env.EMAIL_DEBUG === 'true';
 
-const emailConfig = {
-  host: emailHost,
-  port: emailPort,
-  secure,
-  auth: emailUser && emailPass ? { user: emailUser, pass: emailPass } : undefined,
-  logger: emailDebug,
-  debug: emailDebug,
-  connectionTimeout: 60000,
-  greetingTimeout: 30000,
-  socketTimeout: 60000,
-  tls: {
-    rejectUnauthorized: false,
-  },
-};
-
-// Domain-based email addresses
-export const EMAIL_ADDRESSES = {
+// Domain-based email addresses (define first, before using in emailFromEmail)
+const EMAIL_ADDRESSES_TEMP = {
   INFO: `info@${fromDomain}`,
   CAREERS: `careers@${fromDomain}`,
   NOREPLY: `noreply@${fromDomain}`,
@@ -38,6 +31,41 @@ export const EMAIL_ADDRESSES = {
   SALES: `sales@${fromDomain}`,
   SUPPORT: `support@${fromDomain}`,
 } as const;
+
+// Email "from" configuration (like marketing emails)
+// This allows sending from mycareerbuild.com addresses while authenticating with different SMTP
+const emailFromEmail = process.env.EMAIL_FROM_EMAIL || process.env.FROM_EMAIL || EMAIL_ADDRESSES_TEMP.CAREERS;
+const emailFromName = process.env.EMAIL_FROM_NAME || process.env.FROM_NAME || 'MyCareerBuild';
+
+const emailConfig = {
+  host: emailHost,
+  port: emailPort,
+  secure,
+  auth: emailUser && emailPass ? { user: emailUser, pass: emailPass } : undefined,
+  logger: process.env.NODE_ENV !== 'production',
+  debug: process.env.NODE_ENV !== 'production',
+  connectionTimeout: 60000,
+  greetingTimeout: 30000,
+  socketTimeout: 60000,
+  tls: {
+    rejectUnauthorized: false,
+  }
+};
+
+// Log email configuration on startup (without exposing password)
+if (process.env.NODE_ENV !== 'production') {
+  console.log('📧 Email Configuration:');
+  console.log(`   Host: ${emailHost}`);
+  console.log(`   Port: ${emailPort}`);
+  console.log(`   Secure: ${secure}`);
+  console.log(`   Auth User: ${emailUser ? emailUser : 'Not configured'}`);
+  console.log(`   From Domain: ${fromDomain}`);
+  console.log(`   From Email: ${emailFromEmail}`);
+  console.log(`   From Name: ${emailFromName}`);
+}
+
+// Domain-based email addresses (export for use in other files)
+export const EMAIL_ADDRESSES = EMAIL_ADDRESSES_TEMP;
 
 // Email context mapping for cPanel Webmail
 export const EMAIL_CONTEXTS = {
@@ -157,13 +185,23 @@ export const sendEmail = async (
   isHTML: boolean = true
 ): Promise<{ success: boolean; messageId?: string; error?: string }> => {
   try {
-    const mailOptions = {
-      from: `MyCareerBuild <${fromEmail}>`,
+    // Use the configured "from" email and name (like marketing emails)
+    // This allows sending from mycareerbuild.com addresses while authenticating with different SMTP
+    const displayFromEmail = fromEmail || emailFromEmail;
+    const displayFromName = emailFromName;
+    
+    const mailOptions: any = {
+      from: `${displayFromName} <${displayFromEmail}>`,
       to: Array.isArray(to) ? to.join(', ') : to,
       subject,
       html: isHTML ? getBaseTemplate(content, subject) : undefined,
       text: isHTML ? undefined : content,
     };
+    
+    // Set reply-to to the same as from (unless it's different from the default)
+    if (displayFromEmail !== fromEmail && fromEmail !== EMAIL_ADDRESSES.NOREPLY) {
+      mailOptions.replyTo = `${displayFromName} <${fromEmail}>`;
+    }
 
     const info = await transporter.sendMail(mailOptions);
     console.log(`✅ Email sent successfully to ${Array.isArray(to) ? to.join(', ') : to}: ${info.messageId}`);

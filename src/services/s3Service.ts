@@ -48,6 +48,11 @@ export const uploadToS3 = async (
   folder: string = 'uploads'
 ): Promise<UploadResult> => {
   try {
+    const bucketName = process.env.AWS_BUCKET_NAME;
+    if (!bucketName) {
+      throw new Error('S3 bucket name is not configured. Please set AWS_BUCKET_NAME in the environment.');
+    }
+
     // Validate file type
     if (!ALLOWED_FILE_TYPES[file.mimetype as keyof typeof ALLOWED_FILE_TYPES]) {
       throw new Error(`File type ${file.mimetype} is not allowed`);
@@ -60,7 +65,7 @@ export const uploadToS3 = async (
 
     // S3 upload parameters
     const uploadParams = {
-      Bucket: process.env.AWS_BUCKET_NAME!,
+      Bucket: bucketName,
       Key: key,
       Body: file.buffer,
       ContentType: file.mimetype,

@@ -4,6 +4,23 @@ const { getSequelize } = require('../utils/sequelize');
 let notificationColumnsPromise = null;
 let jobColumnInfoPromise = null;
 let aiJobColumnInfoPromise = null;
+let currentDialect = 'mysql';
+let currentSchema = null;
+
+function configureDialect(sequelize) {
+  currentDialect = sequelize.getDialect();
+  const defineSchema = sequelize?.options?.define?.schema;
+  const directSchema = sequelize?.options?.schema;
+  currentSchema = currentDialect === 'postgres' ? defineSchema || directSchema || null : null;
+}
+
+function quoteIdentifier(identifier) {
+  if (!identifier) {
+    return '';
+  }
+  const quoteChar = currentDialect === 'postgres' ? '"' : '`';
+  return `${quoteChar}${String(identifier).replace(new RegExp(quoteChar, 'g'), quoteChar + quoteChar)}${quoteChar}`;
+}
 
 function createQuoteHelpers(sequelize) {
   const dialect = sequelize.getDialect();
@@ -20,6 +37,17 @@ function createQuoteHelpers(sequelize) {
   };
 
   return { quoteIdentifier, qualifyColumn };
+}
+
+function qualifyTableName(table) {
+  if (!table) {
+    return '';
+  }
+  const tableName = quoteIdentifier(table);
+  if (currentDialect === 'postgres' && currentSchema) {
+    return `${quoteIdentifier(currentSchema)}.${tableName}`;
+  }
+  return tableName;
 }
 
 function buildColumnFinder(columns) {
@@ -49,6 +77,35 @@ function buildColumnFinder(columns) {
 
 function buildSafeColumnInfo(builder, fallback) {
   return builder().catch(() => fallback);
+}
+
+async function fetchTableColumns(sequelize, table) {
+  if (currentDialect === 'postgres') {
+    const replacements = { table };
+    let schemaClause = '';
+    if (currentSchema) {
+      replacements.schema = currentSchema;
+      schemaClause = 'AND table_schema = :schema';
+    }
+    const rows = await sequelize.query(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = :table
+          ${schemaClause}
+      `,
+      {
+        replacements,
+        type: QueryTypes.SELECT,
+      }
+    );
+    return rows.map((row) => ({ column_name: row.column_name }));
+  }
+
+  const tableIdentifier = qualifyTableName(table);
+  return sequelize.query(`SHOW COLUMNS FROM ${tableIdentifier}`, {
+    type: QueryTypes.SELECT,
+  });
 }
 
 async function resolveJobColumnInfo(sequelize) {
@@ -82,25 +139,25 @@ async function resolveJobColumnInfo(sequelize) {
           categoryColumn: findColumn('category', 'job_category'),
           skillsColumn: findColumn('skillsRequired', 'skills'),
         };
+      } else {
+        const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
+          type: QueryTypes.SELECT,
+        });
+        const findColumn = buildColumnFinder(columns);
+
+        return {
+          createdColumn: findColumn('createdAt', 'created_at'),
+          jobTypeColumn: findColumn('type', 'job_type'),
+          experienceColumn: findColumn('experienceLevel', 'experience'),
+          applyUrlColumn: findColumn('applyUrl', 'link'),
+          locationTypeColumn: findColumn('locationType', 'location_type'),
+          isRemoteColumn: findColumn('isRemote', 'is_remote'),
+          notifySentColumn: findColumn('notify_sent', 'notifysent'),
+          notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
+          categoryColumn: findColumn('category', 'job_category'),
+          skillsColumn: findColumn('skillsRequired', 'skills'),
+        };
       }
-
-      const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
-        type: QueryTypes.SELECT,
-      });
-      const findColumn = buildColumnFinder(columns);
-
-      return {
-        createdColumn: findColumn('createdAt', 'created_at'),
-        jobTypeColumn: findColumn('type', 'job_type'),
-        experienceColumn: findColumn('experienceLevel', 'experience'),
-        applyUrlColumn: findColumn('applyUrl', 'link'),
-        locationTypeColumn: findColumn('locationType', 'location_type'),
-        isRemoteColumn: findColumn('isRemote', 'is_remote'),
-        notifySentColumn: findColumn('notify_sent', 'notifysent'),
-        notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
-        categoryColumn: findColumn('category', 'job_category'),
-        skillsColumn: findColumn('skillsRequired', 'skills'),
-      };
     } catch (error) {
       return {
         createdColumn: 'createdAt',
@@ -165,26 +222,25 @@ async function resolveAiJobColumnInfo(sequelize) {
           categoryColumn: findColumn('category', 'job_type'),
           skillsColumn: findColumn('skills'),
         };
+      } else {
+        const columns = await sequelize.query('SHOW COLUMNS FROM aijobs', {
+          type: QueryTypes.SELECT,
+        });
+        const findColumn = buildColumnFinder(columns);
+        return {
+          createdColumn: findColumn('created_at', 'createdAt'),
+          postedColumn: findColumn('posted_date', 'postedDate'),
+          jobTypeColumn: findColumn('job_type', 'jobType'),
+          remoteColumn: findColumn('remote', 'is_remote', 'isRemote'),
+          experienceColumn: findColumn('experience'),
+          applyUrlColumn: findColumn('job_url', 'applyUrl', 'link'),
+          locationTypeColumn: findColumn('location_type', 'job_type', 'type'),
+          notifySentColumn: findColumn('notify_sent', 'notifysent'),
+          notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
+          categoryColumn: findColumn('category', 'job_type'),
+          skillsColumn: findColumn('skills'),
+        };
       }
-
-      const columns = await sequelize.query('SHOW COLUMNS FROM aijobs', {
-        type: QueryTypes.SELECT,
-      });
-      const findColumn = buildColumnFinder(columns);
-
-      return {
-        createdColumn: findColumn('created_at', 'createdAt'),
-        postedColumn: findColumn('posted_date', 'postedDate'),
-        jobTypeColumn: findColumn('job_type', 'jobType'),
-        remoteColumn: findColumn('remote', 'is_remote', 'isRemote'),
-        experienceColumn: findColumn('experience'),
-        applyUrlColumn: findColumn('job_url', 'applyUrl', 'link'),
-        locationTypeColumn: findColumn('location_type', 'job_type', 'type'),
-        notifySentColumn: findColumn('notify_sent', 'notifysent'),
-        notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
-        categoryColumn: findColumn('category', 'job_type'),
-        skillsColumn: findColumn('skills'),
-      };
     } catch (error) {
       return {
         createdColumn: null,
@@ -231,7 +287,32 @@ async function ensureNotificationColumns(sequelize) {
   }
 
   async function columnExists(table, column) {
-    const rows = await sequelize.query(`SHOW COLUMNS FROM ${table} LIKE :column`, {
+    if (currentDialect === 'postgres') {
+      const replacements = { table, column };
+      let schemaClause = '';
+      if (currentSchema) {
+        replacements.schema = currentSchema;
+        schemaClause = 'AND table_schema = :schema';
+      }
+      const rows = await sequelize.query(
+        `
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_name = :table
+            ${schemaClause}
+            AND column_name = :column
+          LIMIT 1
+        `,
+        {
+          replacements,
+          type: QueryTypes.SELECT,
+        }
+      );
+      return Array.isArray(rows) && rows.length > 0;
+    }
+
+    const tableIdentifier = qualifyTableName(table);
+    const rows = await sequelize.query(`SHOW COLUMNS FROM ${tableIdentifier} LIKE :column`, {
       replacements: { column },
       type: QueryTypes.SELECT,
     });
@@ -241,21 +322,29 @@ async function ensureNotificationColumns(sequelize) {
   async function addColumnIfMissing(table, column, definition) {
     const exists = await columnExists(table, column);
     if (!exists) {
-      await sequelize.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      await sequelize.query(
+        `ALTER TABLE ${qualifyTableName(table)} ADD COLUMN ${quoteIdentifier(column)} ${definition}`
+      );
     }
   }
 
   notificationColumnsPromise = (async () => {
-    await addColumnIfMissing('jobs', 'notify_sent', 'TINYINT(1) NOT NULL DEFAULT 0');
-    await addColumnIfMissing('jobs', 'notify_sent_at', 'DATETIME NULL');
-    await addColumnIfMissing('aijobs', 'notify_sent', 'TINYINT(1) NOT NULL DEFAULT 0');
-    await addColumnIfMissing('aijobs', 'notify_sent_at', 'DATETIME NULL');
+    const notifySentDefinition =
+      currentDialect === 'postgres' ? 'BOOLEAN NOT NULL DEFAULT FALSE' : 'TINYINT(1) NOT NULL DEFAULT 0';
+    const notifySentAtDefinition =
+      currentDialect === 'postgres' ? 'TIMESTAMP WITHOUT TIME ZONE NULL' : 'DATETIME NULL';
+
+    await addColumnIfMissing('jobs', 'notify_sent', notifySentDefinition);
+    await addColumnIfMissing('jobs', 'notify_sent_at', notifySentAtDefinition);
+    await addColumnIfMissing('aijobs', 'notify_sent', notifySentDefinition);
+    await addColumnIfMissing('aijobs', 'notify_sent_at', notifySentAtDefinition);
   })();
 
   return notificationColumnsPromise;
 }
 
 function createJobsRepository({ sequelize = getSequelize() } = {}) {
+  configureDialect(sequelize);
   const { quoteIdentifier, qualifyColumn } = createQuoteHelpers(sequelize);
   async function fetchPendingJobs({ limit, createdAfter }) {
     await ensureNotificationColumns(sequelize);
@@ -344,7 +433,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
             ${applyUrlExpr} AS apply_url,
             ${categoryExpr} AS category,
             ${skillsExpr} AS skills
-          FROM jobs
+          FROM ${qualifyTableName('jobs')} AS jobs
           ${jobWhereClause}
 
           UNION ALL
@@ -365,7 +454,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
             ${aiApplyUrlExpr} AS apply_url,
             ${aiCategoryExpr} AS category,
             ${aiSkillsExpr} AS skills
-          FROM aijobs
+          FROM ${qualifyTableName('aijobs')} AS aijobs
           ${aiWhereClause}
         ) AS pending
         ORDER BY pending.created_at DESC
@@ -448,12 +537,12 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const aiWhere = aiConditions.length > 0 ? `WHERE ${aiConditions.join(' AND ')}` : '';
 
     const [jobsCountRows, aiJobsCountRows] = await Promise.all([
-      sequelize.query(`SELECT COUNT(*) AS total FROM jobs ${jobsWhere}`, {
+      sequelize.query(`SELECT COUNT(*) AS total FROM ${qualifyTableName('jobs')} AS jobs ${jobsWhere}`, {
         replacements,
         type: QueryTypes.SELECT,
       }),
       aiDateExpression
-        ? sequelize.query(`SELECT COUNT(*) AS total FROM aijobs ${aiWhere}`, {
+        ? sequelize.query(`SELECT COUNT(*) AS total FROM ${qualifyTableName('aijobs')} AS aijobs ${aiWhere}`, {
             replacements,
             type: QueryTypes.SELECT,
           })
