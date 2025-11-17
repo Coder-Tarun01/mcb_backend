@@ -4,11 +4,15 @@
 
 The marketing notification module sends periodic job digests to subscribed marketing contacts. It operates independently from existing fresher notifications and can be managed via cron automation or manual triggers.
 
+**Important**: The `MARKETING_EMAIL_CRON` environment variable controls the schedule for **BOTH email and Telegram notifications**. They run together on the same schedule.
+
 ## Key Features
 
-- Pulls pending jobs from `jobs` and `aijobs`, deduplicates, and composes a daily digest (top five roles).
+- Pulls pending jobs from `jobs` and `aijobs`, deduplicates, and composes personalized digests (top five roles per contact).
+- **Personalized filtering**: Jobs are filtered by each contact's branch and experience level, ensuring different users receive different job recommendations.
 - Sends personalised HTML + text emails with unsubscribe guidance.
-- Optionally broadcasts the same digest over Telegram for contacts linked with a chat id.
+- Optionally broadcasts the same personalized digest over Telegram for contacts linked with a chat id.
+- Default schedule: Runs every 3 days at midnight (`0 0 */3 * *`).
 - Batches delivery (default 50 contacts), enforces concurrency (default 5), and retries with exponential backoff (1m, 5m, 15m) per channel.
 - Logs success and failure events under `notifications/logs`.
 - Exposes health and manual-trigger endpoints under `/notifications/marketing`.
@@ -20,7 +24,7 @@ Define the following environment variables (update `env.example` and production 
 
 ```
 MARKETING_EMAIL_ENABLED=true
-MARKETING_EMAIL_CRON=*/30 * * * *
+MARKETING_EMAIL_CRON=0 0 */3 * *
 MARKETING_JOBS_FETCH_LIMIT=100
 MARKETING_JOBS_CREATED_SINCE_HOURS=72
 MARKETING_DIGEST_SIZE=5
@@ -103,11 +107,62 @@ For production, store SMTP credentials in the secrets manager rather than `.env`
 - Run with `node --test notifications/marketing/__tests__/marketing.orchestrator.test.js`.
 - Coverage includes happy path, SMTP failures, and contact deduping.
 
+## Job Filtering and Personalization
+
+The system personalizes job recommendations for each contact based on their `branch` and `experience` fields in the `marketing_contacts` table.
+
+### Filtering Strategy
+
+The system uses a multi-strategy approach to find matching jobs:
+
+1. **Fresher jobs with branch + experience match** (strictest for freshers)
+2. **Fresher jobs with branch match only**
+3. **Fresher jobs with experience match only**
+4. **All jobs with branch + experience match** (strictest)
+5. **All jobs with branch match only**
+6. **All jobs with experience match only**
+
+**Important**: If no jobs match a contact's profile, they will **not** receive any jobs. The system does not send all jobs as a fallback to prevent spam.
+
+### Branch Format
+
+- Can be a single branch (e.g., `"Computer Science"`)
+- Can be comma-separated (e.g., `"Computer Science, Information Technology"`)
+- Can use `/` or `&` separators (e.g., `"CS/IT"`)
+- Matching is case-insensitive and partial (e.g., `"CS"` matches `"Computer Science"`)
+
+### Experience Format
+
+- Range format: `"0-2"`, `"2-5"`, `"5-10"`
+- Plus format: `"5+"` (5 years and above)
+- Single value: `"2"` (exactly 2 years)
+- Fresher: `"fresher"`, `"0"`, `"0-0"`, `"0-1"`
+
+### Testing Filtering
+
+Use the test script to verify filtering works correctly:
+
+```bash
+# Test all contacts
+node scripts/test-marketing-filtering.js
+
+# Test specific contact
+node scripts/test-marketing-filtering.js --contact-id 123
+
+# Test with all contacts (up to 10)
+node scripts/test-marketing-filtering.js --all-contacts
+```
+
+The script will show:
+- Which jobs are selected for each contact
+- Which strategy was used to match jobs
+- Whether jobs are personalized (different contacts get different jobs)
+- Any shared jobs across contacts (should be minimal)
+
 ## Future Enhancements
 
 Comments within the code mark placeholders for:
 
-- Contact segmentation by branch/experience.
 - Preference-driven frequency controls.
 - Analytics and attribution tracking.
 

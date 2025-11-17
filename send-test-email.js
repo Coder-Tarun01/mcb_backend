@@ -133,7 +133,7 @@ async function sendTestEmail() {
     console.log('1. Check your email inbox');
     console.log('2. Check spam/junk folder');
     console.log('3. Check promotions tab (Gmail)');
-    console.log('4. Search for emails from:', process.env.SMTP_USER || 'tanasvi.dev@gmail.com');
+    console.log('4. Search for emails from:', process.env.SMTP_USER || 'careers@mycareerbuild.com');
     
   } catch (error) {
     console.error('❌ Failed to send email:', error.message);

@@ -89,9 +89,37 @@ function createTriggerController({ orchestrator, jobsRepository, logger, config 
     }
   }
 
+  async function summary(req, res) {
+    try {
+      const healthSummary = await orchestrator.getHealthSummary();
+      const lastSummary = healthSummary.lastSummary;
+
+      if (!lastSummary) {
+        res.json({
+          success: true,
+          data: null,
+          message: 'No previous run summary available',
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: lastSummary,
+      });
+    } catch (error) {
+      console.error('Failed to get marketing run summary', error);
+      res.status(500).json({
+        success: false,
+        error: error?.message || 'Failed to get marketing run summary',
+      });
+    }
+  }
+
   return {
     trigger,
     health,
+    summary,
   };
 }
 
