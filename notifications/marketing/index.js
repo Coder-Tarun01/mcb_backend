@@ -465,7 +465,44 @@ function matchesToken(job, normalizedToken) {
     return false;
   }
   const haystacks = collectJobTokens(job);
-  return haystacks.some((value) => value.includes(normalizedToken));
+  
+  // Direct match: check if token is in any haystack
+  if (haystacks.some((value) => value.includes(normalizedToken))) {
+    return true;
+  }
+  
+  // Reverse match: check if any haystack is in the token (for abbreviations)
+  // e.g., "cse" should match "computer science engineering"
+  if (haystacks.some((value) => normalizedToken.includes(value) && value.length > 3)) {
+    return true;
+  }
+  
+  // Branch abbreviation mapping
+  const branchMap = getBranchMapping();
+  const expandedTokens = branchMap[normalizedToken] || [];
+  if (expandedTokens.length > 0) {
+    return expandedTokens.some(expandedToken => 
+      haystacks.some((value) => value.includes(expandedToken))
+    );
+  }
+  
+  return false;
+}
+
+function getBranchMapping() {
+  return {
+    'cse': ['computer science', 'computer science engineering', 'cs', 'cse', 'computer', 'software'],
+    'cs': ['computer science', 'computer science engineering', 'cse', 'cs', 'computer', 'software'],
+    'it': ['information technology', 'it', 'information', 'technology'],
+    'ece': ['electronics', 'electronics communication', 'ece', 'electronic'],
+    'eee': ['electrical', 'electrical engineering', 'eee', 'electrical and electronics'],
+    'me': ['mechanical', 'mechanical engineering', 'me'],
+    'ce': ['civil', 'civil engineering', 'ce'],
+    'mca': ['master of computer applications', 'mca', 'computer applications'],
+    'bca': ['bachelor of computer applications', 'bca', 'computer applications'],
+    'btech': ['bachelor of technology', 'btech', 'b.tech', 'engineering'],
+    'mtech': ['master of technology', 'mtech', 'm.tech'],
+  };
 }
 
 function collectJobTokens(job) {
@@ -484,9 +521,17 @@ function collectJobTokens(job) {
   push(job?.locationType);
   push(job?.title);
   push(job?.experience);
+  push(job?.experienceLevel);
+  push(job?.educationRequired);
+  push(job?.description);
+  push(job?.companyName);
+  push(job?.company);
 
   if (Array.isArray(job?.skills)) {
     job.skills.forEach(push);
+  } else if (job?.skills && typeof job.skills === 'string') {
+    // Handle skills as comma-separated string
+    job.skills.split(',').forEach(skill => push(skill.trim()));
   }
 
   return tokens;
@@ -496,8 +541,25 @@ function isFresherJob(job) {
   if (!job) {
     return false;
   }
+  
+  // Check experienceLevel field directly
+  const experienceLevel = job.experienceLevel || job.experience;
+  if (experienceLevel) {
+    const expLower = String(experienceLevel).trim().toLowerCase();
+    if (expLower.includes('fresher') || expLower.includes('entry') || expLower === '0' || expLower === '0-0' || expLower === '0-1') {
+      return true;
+    }
+    
+    // Check if parsed experience range is 0-1 years
+    const parsedRange = parseExperienceRange(experienceLevel);
+    if (parsedRange && parsedRange.min <= 0 && parsedRange.max <= 1) {
+      return true;
+    }
+  }
+  
+  // Fallback to token-based check
   const tokens = collectJobTokens(job);
-  return tokens.some((token) => token.includes('fresher'));
+  return tokens.some((token) => token.includes('fresher') || token.includes('entry'));
 }
 
 function normalizeBranchTokens(branch) {
@@ -511,9 +573,15 @@ function normalizeBranchTokens(branch) {
 }
 
 function filterByBranch(jobs, branchTokens) {
-  if (!Array.isArray(jobs) || jobs.length === 0 || !Array.isArray(branchTokens) || branchTokens.length === 0) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
     return [];
   }
+  
+  // If no branch tokens, return all jobs (no branch filtering)
+  if (!Array.isArray(branchTokens) || branchTokens.length === 0) {
+    return jobs;
+  }
+  
   const seen = new Set();
   const results = [];
 
@@ -593,7 +661,19 @@ function uniqueJobs(jobs) {
 }
 
 function parseExperienceRange(raw) {
-  if (!raw || typeof raw !== 'string') {
+  if (!raw) {
+    return null;
+  }
+
+  // Handle numeric values directly
+  if (typeof raw === 'number') {
+    if (raw === 0) {
+      return { min: 0, max: 1 };
+    }
+    return { min: raw, max: raw };
+  }
+
+  if (typeof raw !== 'string') {
     return null;
   }
 
@@ -604,6 +684,11 @@ function parseExperienceRange(raw) {
 
   const lower = value.toLowerCase();
   if (lower.includes('fresher') || lower.includes('entry')) {
+    return { min: 0, max: 1 };
+  }
+
+  // Handle single "0" as fresher
+  if (value === '0' || lower === '0') {
     return { min: 0, max: 1 };
   }
 
@@ -625,10 +710,18 @@ function parseExperienceRange(raw) {
     const [first, second] = numbers;
     const min = Math.min(first, second);
     const max = Math.max(first, second);
+    // If range is 0-0 or 0-1, treat as fresher
+    if (min === 0 && max <= 1) {
+      return { min: 0, max: 1 };
+    }
     return { min, max };
   }
 
   const single = numbers[0];
+  // Single 0 means fresher
+  if (single === 0) {
+    return { min: 0, max: 1 };
+  }
   if (hasPlus) {
     return { min: single, max: Infinity };
   }
@@ -653,11 +746,22 @@ function extractJobExperienceRange(job) {
   if (!job) {
     return null;
   }
+  
+  // Prioritize experienceLevel field, then experience field
   const jobExperience =
-    job.experience ||
     job.experienceLevel ||
+    job.experience ||
     job.jobExperience ||
     (Array.isArray(job.requirements) ? job.requirements.find((req) => typeof req === 'string' && req.toLowerCase().includes('experience')) : null);
+
+  if (!jobExperience) {
+    return null;
+  }
+
+  // If it's already a parsed range object, return it
+  if (typeof jobExperience === 'object' && jobExperience !== null && 'min' in jobExperience && 'max' in jobExperience) {
+    return jobExperience;
+  }
 
   return parseExperienceRange(jobExperience);
 }

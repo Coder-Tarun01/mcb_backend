@@ -138,6 +138,7 @@ async function resolveJobColumnInfo(sequelize) {
           notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
           categoryColumn: findColumn('category', 'job_category'),
           skillsColumn: findColumn('skillsRequired', 'skills'),
+          educationColumn: findColumn('educationRequired', 'education_required', 'education'),
         };
       } else {
         const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
@@ -156,6 +157,7 @@ async function resolveJobColumnInfo(sequelize) {
           notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
           categoryColumn: findColumn('category', 'job_category'),
           skillsColumn: findColumn('skillsRequired', 'skills'),
+          educationColumn: findColumn('educationRequired', 'education_required', 'education'),
         };
       }
     } catch (error) {
@@ -170,6 +172,7 @@ async function resolveJobColumnInfo(sequelize) {
         notifySentAtColumn: 'notify_sent_at',
         categoryColumn: 'category',
         skillsColumn: 'skillsRequired',
+        educationColumn: 'educationRequired',
       };
     }
   };
@@ -185,6 +188,7 @@ async function resolveJobColumnInfo(sequelize) {
     notifySentAtColumn: 'notify_sent_at',
     categoryColumn: 'category',
     skillsColumn: 'skillsRequired',
+    educationColumn: 'educationRequired',
   });
 
   return jobColumnInfoPromise;
@@ -221,6 +225,7 @@ async function resolveAiJobColumnInfo(sequelize) {
           notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
           categoryColumn: findColumn('category', 'job_type'),
           skillsColumn: findColumn('skills'),
+          educationColumn: findColumn('educationRequired', 'education_required', 'education'),
         };
       } else {
         const columns = await sequelize.query('SHOW COLUMNS FROM aijobs', {
@@ -239,6 +244,7 @@ async function resolveAiJobColumnInfo(sequelize) {
           notifySentAtColumn: findColumn('notify_sent_at', 'notifysentat'),
           categoryColumn: findColumn('category', 'job_type'),
           skillsColumn: findColumn('skills'),
+          educationColumn: findColumn('educationRequired', 'education_required', 'education'),
         };
       }
     } catch (error) {
@@ -254,6 +260,7 @@ async function resolveAiJobColumnInfo(sequelize) {
         notifySentAtColumn: 'notify_sent_at',
         categoryColumn: 'job_type',
         skillsColumn: 'skills',
+        educationColumn: null,
       };
     }
   };
@@ -270,6 +277,7 @@ async function resolveAiJobColumnInfo(sequelize) {
     notifySentAtColumn: 'notify_sent_at',
     categoryColumn: 'job_type',
     skillsColumn: 'skills',
+    educationColumn: null,
   });
 
   return aiJobColumnInfoPromise;
@@ -360,6 +368,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const notifySentColumnName = columns.notifySentColumn || 'notify_sent';
     const categoryColumnName = columns.categoryColumn;
     const skillsColumnName = columns.skillsColumn;
+    const educationColumnName = columns.educationColumn;
 
     const createdColumnQualified = qualifyColumn('jobs', createdColumnName);
     const jobTypeQualified = qualifyColumn('jobs', jobTypeColumnName);
@@ -370,6 +379,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const jobIdExpr = `${qualifyColumn('jobs', 'id')}::text`;
     const categoryExpr = categoryColumnName ? `COALESCE(${qualifyColumn('jobs', categoryColumnName)}, '')` : "''";
     const skillsExpr = skillsColumnName ? qualifyColumn('jobs', skillsColumnName) : 'NULL';
+    const educationExpr = educationColumnName ? `COALESCE(${qualifyColumn('jobs', educationColumnName)}, '')` : "''";
     const notifySentExpr = notifySentColumnName ? qualifyColumn('jobs', notifySentColumnName) : null;
 
     const aiCreatedColumns = [aiColumns.createdColumn, aiColumns.postedColumn]
@@ -384,6 +394,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const aiApplyUrlExpr = aiColumns.applyUrlColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.applyUrlColumn)}, '')` : "''";
     const aiCategoryExpr = aiColumns.categoryColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.categoryColumn)}, '')` : "''";
     const aiSkillsExpr = aiColumns.skillsColumn ? qualifyColumn('aijobs', aiColumns.skillsColumn) : 'NULL';
+    const aiEducationExpr = aiColumns.educationColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.educationColumn)}, '')` : "''";
     const aiNotifySentAtExpr = aiColumns.notifySentAtColumn ? qualifyColumn('aijobs', aiColumns.notifySentAtColumn) : 'NULL';
     const aiNotifySentExpr = aiColumns.notifySentColumn ? qualifyColumn('aijobs', aiColumns.notifySentColumn) : null;
 
@@ -432,7 +443,9 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
             ${experienceExpr} AS experience,
             ${applyUrlExpr} AS apply_url,
             ${categoryExpr} AS category,
-            ${skillsExpr} AS skills
+            ${skillsExpr} AS skills,
+            ${educationExpr} AS education_required,
+            COALESCE(jobs.description, jobs.jobDescription, '') AS description
           FROM ${qualifyTableName('jobs')} AS jobs
           ${jobWhereClause}
 
@@ -453,7 +466,9 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
             ${aiExperienceExpr} AS experience,
             ${aiApplyUrlExpr} AS apply_url,
             ${aiCategoryExpr} AS category,
-            ${aiSkillsExpr} AS skills
+            ${aiSkillsExpr} AS skills,
+            ${aiEducationExpr} AS education_required,
+            COALESCE(aijobs.description, '') AS description
           FROM ${qualifyTableName('aijobs')} AS aijobs
           ${aiWhereClause}
         ) AS pending
@@ -473,6 +488,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
         id: row.id,
         title: row.title,
         companyName: row.company_name,
+        company: row.company_name,
         location: row.location,
         isRemote: normalizeRemote(row.is_remote),
         locationType: row.location_type,
@@ -485,6 +501,8 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
         ctaUrl: buildDefaultApplyUrl(row.source, row.id),
         category: row.category || null,
         skills,
+        educationRequired: row.education_required || null,
+        description: row.description || null,
       };
     });
   }
