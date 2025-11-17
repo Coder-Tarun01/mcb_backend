@@ -4,7 +4,7 @@ import * as models from '../models';
 import { AuthRequest } from '../middleware/auth';
 import multer from 'multer';
 import path from 'path';
-import { uploadToS3 } from '../services/s3Service';
+import { uploadToS3, getSignedUrl } from '../services/s3Service';
 
 // Extend Request type to include multer file
 interface MulterRequest extends Request {
@@ -43,6 +43,54 @@ export async function getUserApplications(req: Request, res: Response, next: Nex
     });
     return res.json(applications);
   } catch (e) { next(e); }
+}
+
+export async function getApplicationResumeDownloadUrl(req: Request, res: Response, next: NextFunction) {
+  try {
+    const requester = (req as AuthRequest).user;
+    if (!requester) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    const { id } = req.params;
+    const application = await Application.findByPk(id);
+    if (!application) {
+      return res.status(404).json({ message: 'Application not found' });
+    }
+
+    const isOwner = application.userId === requester.id;
+    const isEmployer = requester.role === 'employer';
+    if (!isOwner && !isEmployer) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    let resumeUrl = application.resumeUrl || null;
+    if (!resumeUrl && isEmployer) {
+      const candidate = await User.findByPk(application.userId);
+      resumeUrl = candidate?.resumeUrl || null;
+    }
+
+    if (!resumeUrl) {
+      return res.status(404).json({ message: 'Resume not available for this application' });
+    }
+
+    let downloadUrl = resumeUrl;
+    if (resumeUrl.includes('amazonaws.com') || resumeUrl.includes('.s3.')) {
+      try {
+        downloadUrl = await getSignedUrl(resumeUrl, 3600);
+      } catch (err) {
+        console.error('Failed to generate signed resume URL:', err);
+      }
+    }
+
+    return res.json({
+      success: true,
+      downloadUrl,
+      applicationId: application.id
+    });
+  } catch (e) {
+    next(e);
+  }
 }
 
 export async function applyToJob(req: MulterRequest, res: Response, next: NextFunction) {
@@ -185,15 +233,15 @@ export async function getJobApplications(req: Request, res: Response, next: Next
         u.email as user_email,
         u.phone as user_phone,
         u.skills as user_skills,
-        u.resumeUrl as user_resumeUrl,
+        u."resumeUrl" as user_resumeUrl,
         j.title as job_title,
         j.company as job_company,
         j.location as job_location
       FROM applications a
-      LEFT JOIN users u ON a.userId = u.id
-      LEFT JOIN jobs j ON a.jobId = j.id
-      WHERE a.jobId = :jobId
-      ORDER BY a.createdAt DESC
+      LEFT JOIN users u ON a."userId" = u.id
+      LEFT JOIN jobs j ON a."jobId" = j.id
+      WHERE a."jobId" = :jobId
+      ORDER BY a."createdAt" DESC
     `;
 
     const applications = await sequelize.query(query, { replacements: { jobId: req.params.jobId }, type: QueryTypes.SELECT });

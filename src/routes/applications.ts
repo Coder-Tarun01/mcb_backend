@@ -11,7 +11,8 @@ import {
   getJobApplications,
   getAllEmployerApplications,
   getEmployerStats,
-  uploadResumeMiddleware
+  uploadResumeMiddleware,
+  getApplicationResumeDownloadUrl
 } from '../controllers/applications.controller';
 
 const router = Router();
@@ -27,6 +28,7 @@ router.get('/job/:jobId', authorize('employer'), getJobApplications);
 // Employee routes
 router.get('/', getUserApplications);
 router.post('/', uploadResumeMiddleware, applyToJob);
+router.get('/:id/resume/download', getApplicationResumeDownloadUrl);
 router.get('/:id', getApplication);
 router.put('/:id', updateApplication);
 router.delete('/:id', withdrawApplication);
