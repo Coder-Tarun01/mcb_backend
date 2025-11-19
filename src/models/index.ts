@@ -12,7 +12,7 @@ import { Company } from './Company';
 import { CVFile } from './CVFile';
 import { Resume } from './Resume';
 import { JobApplyClick } from './JobApplyClick';
-import { AiJob } from './AiJob';
+import { AccountsJobData } from './AccountsJobData';
 
 // Set up associations after all models are imported
 import { setupAssociations } from './associations';
@@ -21,4 +21,17 @@ import { setupAssociations } from './associations';
 setupAssociations();
 
 // Export models
-export { User, Job, Candidate, Application, SavedJob, SavedCandidate, Notification, Company, CVFile, Resume, JobApplyClick, AiJob };
+export {
+  User,
+  Job,
+  Candidate,
+  Application,
+  SavedJob,
+  SavedCandidate,
+  Notification,
+  Company,
+  CVFile,
+  Resume,
+  JobApplyClick,
+  AccountsJobData,
+};

@@ -34,6 +34,24 @@ async function setWebhook(webhookUrl) {
     process.exit(1);
   }
 
+  // Validate URL format
+  try {
+    const url = new URL(webhookUrl);
+    if (url.protocol !== 'https:') {
+      console.error('❌ Error: Webhook URL must use HTTPS protocol');
+      console.error('   Telegram requires HTTPS with a valid SSL certificate');
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error('❌ Error: Invalid webhook URL format');
+    console.error('   URL must be a valid HTTPS URL (e.g., https://example.com/path)');
+    console.error('   Common issues:');
+    console.error('     - Missing double slash: https:/example.com (should be https://example.com)');
+    console.error('     - Missing protocol: example.com (should be https://example.com)');
+    console.error('     - Invalid characters in URL');
+    process.exit(1);
+  }
+
   // Add secret to URL if not already present
   const urlWithSecret = webhookUrl.includes('?') 
     ? `${webhookUrl}&secret=${encodeURIComponent(WEBHOOK_SECRET)}`

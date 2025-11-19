@@ -18,7 +18,7 @@
     "migrate:resume": "node src/scripts/create-resumes-table.js",
     "migrate:enhance-jobs": "node src/scripts/enhance-jobs-table.js",
     "migrate:apply-url": "node src/scripts/add-apply-url-column.js",
-    "migrate:aijobs": "npx ts-node src/scripts/create-aijobs-table.ts",
+    "migrate:accounts-jobdata": "npx ts-node src/scripts/create-accounts-jobdata-table.ts",
     "check:schema": "node test-db-schema.js",
     "test:profile": "node test-profile-update.js",
     "fix:db": "node src/scripts/fix-database-constraints.js",

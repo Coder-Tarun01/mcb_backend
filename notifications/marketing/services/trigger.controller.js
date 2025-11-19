@@ -92,7 +92,59 @@ function createTriggerController({ orchestrator, jobsRepository, logger, config 
   async function summary(req, res) {
     try {
       const healthSummary = await orchestrator.getHealthSummary();
-      const lastSummary = healthSummary.lastSummary;
+      let lastSummary = healthSummary.lastSummary;
+
+      // If no summary in memory, try to load from log file
+      if (!lastSummary) {
+        try {
+          const fs = require('fs');
+          const marketingLogger = require('../logger');
+          const logPath = marketingLogger.SUCCESS_LOG;
+          
+          if (fs.existsSync(logPath)) {
+            const logContent = fs.readFileSync(logPath, 'utf-8');
+            const lines = logContent.split('\n').filter(line => line.trim().length > 0);
+            
+            // Find the last COMPLETED entry
+            for (let i = lines.length - 1; i >= 0; i--) {
+              try {
+                const entry = JSON.parse(lines[i]);
+                if (entry.status === 'COMPLETED' && entry.batchId && entry.source) {
+                  // Reconstruct summary from log entry
+                  const contactsAttempted = (entry.contactsSucceeded || 0) + (entry.contactsFailed || 0);
+                  lastSummary = {
+                    ok: (entry.contactsFailed || 0) === 0,
+                    skipped: false,
+                    batchId: entry.batchId,
+                    startedAt: entry.timestamp || new Date().toISOString(),
+                    finishedAt: entry.timestamp || new Date().toISOString(),
+                    jobsQueried: entry.jobsQueried || 0,
+                    jobsIncluded: entry.jobsIncluded || entry.jobsQueried || 0,
+                    contactsAttempted: contactsAttempted,
+                    contactsTotal: contactsAttempted,
+                    contactsSkipped: 0,
+                    contactsSucceeded: entry.contactsSucceeded || 0,
+                    contactsFailed: entry.contactsFailed || 0,
+                    source: entry.source || 'unknown',
+                    errors: (entry.contactsFailed || 0) > 0 ? [{ stage: 'contacts', message: `${entry.contactsFailed} contact(s) failed` }] : [],
+                    channels: {
+                      email: { attempted: 0, succeeded: 0, failed: 0 },
+                      telegram: { attempted: 0, succeeded: 0, failed: 0, skipped: 0 },
+                    },
+                    jobsMarkedNotified: {},
+                  };
+                  break;
+                }
+              } catch (parseError) {
+                // Skip invalid JSON lines
+                continue;
+              }
+            }
+          }
+        } catch (logError) {
+          console.warn('Failed to load summary from log file:', logError.message);
+        }
+      }
 
       if (!lastSummary) {
         res.json({

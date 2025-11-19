@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { Job, User, JobApplyClick, AiJob } from '../models';
+import { Job, User, JobApplyClick, AccountsJobData } from '../models';
 import { buildJobSlug, extractIdFromSlug } from '../utils/slug';
 import { AuthRequest } from '../middleware/auth';
 import { sendJobNotificationEmail, logEmailError } from '../services/mailService';
@@ -89,7 +89,7 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
 
     let aiJobs: any[] = [];
     try {
-      aiJobs = await (AiJob as any).findAll({
+      aiJobs = await (AccountsJobData as any).findAll({
         where: aiWhere,
         order: [['posted_date', 'DESC']],
         limit: calculatedLimit * 2,
@@ -336,7 +336,7 @@ export async function getJob(req: Request, res: Response, next: NextFunction) {
     });
     if (!job) {
       // Try AI jobs table
-      const ai = await (AiJob as any).findByPk(id);
+      const ai = await (AccountsJobData as any).findByPk(id);
       if (ai) {
         // Transform to frontend shape
         let skillsArray: string[] | undefined = undefined;
@@ -971,13 +971,13 @@ export async function recordApplyClick(req: Request, res: Response, next: NextFu
 
 /**
  * Get Home Page Jobs API
- * Fetches jobs from two tables (jobs and aijobs) and returns categorized results
+ * Fetches jobs from two tables (jobs and accounts_jobdata) and returns categorized results
  * Categories: Remote, Fresher, Government, Experienced
  */
 export async function getHomePageJobs(req: Request, res: Response, next: NextFunction) {
   try {
     // Fetch from both tables separately (no joins)
-    const [employerJobs, aiJobs] = await Promise.all([
+    const [employerJobs, accountsJobs] = await Promise.all([
       Job.findAll({
         attributes: {
           exclude: ['slug', 'previousSlugs']
@@ -985,7 +985,7 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
         order: [['createdAt', 'DESC']],
         limit: 100 // Fetch more for filtering
       }),
-      AiJob.findAll({
+      AccountsJobData.findAll({
         order: [['posted_date', 'DESC']],
         limit: 100 // Fetch more for filtering
       })
@@ -1021,18 +1021,18 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
       };
     });
 
-    // Normalize AI jobs to common format
-    const normalizedAiJobs = aiJobs.map((j: any) => {
-      const aiData = j.toJSON ? j.toJSON() : j;
+    // Normalize accounts_jobdata jobs to common format
+    const normalizedAccountsJobs = accountsJobs.map((j: any) => {
+      const externalData = j.toJSON ? j.toJSON() : j;
       let skillsArray: string[] = [];
-      if (aiData.skills) {
-        skillsArray = String(aiData.skills).split(',').map((s: string) => s.trim()).filter(Boolean);
+      if (externalData.skills) {
+        skillsArray = String(externalData.skills).split(',').map((s: string) => s.trim()).filter(Boolean);
       }
       
       // Parse experience string
       let experienceNum = null;
-      if (aiData.experience) {
-        const expStr = String(aiData.experience).toLowerCase();
+      if (externalData.experience) {
+        const expStr = String(externalData.experience).toLowerCase();
         if (expStr.includes('fresher') || expStr.includes('entry') || expStr === '0') {
           experienceNum = 0;
         } else {
@@ -1042,27 +1042,27 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
       }
 
       return {
-        id: String(aiData.id || ''),
-        title: aiData.title || '',
-        company: aiData.company || '',
-        location: aiData.location || null,
-        type: aiData.job_type || null,
-        category: null, // AI jobs don't have category field
-        isRemote: (aiData.location && String(aiData.location).toLowerCase().includes('remote')) || false,
-        description: aiData.description || null,
-        experienceLevel: aiData.experience || null,
+        id: String(externalData.id || ''),
+        title: externalData.title || '',
+        company: externalData.company || '',
+        location: externalData.location || null,
+        type: externalData.job_type || null,
+        category: null, // external jobs don't have category field
+        isRemote: (externalData.location && String(externalData.location).toLowerCase().includes('remote')) || false,
+        description: externalData.description || null,
+        experienceLevel: externalData.experience || null,
         experience: experienceNum !== null ? { min: experienceNum, max: null } : null,
         skills: skillsArray,
-        postedDate: aiData.posted_date || null,
-        createdAt: aiData.posted_date || null,
+        postedDate: externalData.posted_date || null,
+        createdAt: externalData.posted_date || null,
         salary: null,
-        jobUrl: aiData.job_url || null,
-        _source: 'ai'
+        jobUrl: externalData.job_url || null,
+        _source: 'accounts'
       };
     });
 
     // Merge all jobs
-    const allJobs = [...normalizedEmployerJobs, ...normalizedAiJobs];
+    const allJobs = [...normalizedEmployerJobs, ...normalizedAccountsJobs];
 
     // Helper function to filter by category
     const filterJobs = (category: string, jobs: any[]): any[] => {
@@ -1164,7 +1164,7 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
       // Fallback: if no results, fetch all and filter again
       if (categoryJobs.length === 0) {
         // Fetch more jobs from both tables
-        const [fallbackEmployerJobs, fallbackAiJobs] = await Promise.all([
+        const [fallbackEmployerJobs, fallbackAccountsJobs] = await Promise.all([
           Job.findAll({
             attributes: {
               exclude: ['slug', 'previousSlugs']
@@ -1172,7 +1172,7 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
             order: [['createdAt', 'DESC']],
             limit: 500
           }),
-          AiJob.findAll({
+          AccountsJobData.findAll({
             order: [['posted_date', 'DESC']],
             limit: 500
           })
@@ -1208,16 +1208,16 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
           };
         });
 
-        const normalizedFallbackAi = fallbackAiJobs.map((j: any) => {
-          const aiData = j.toJSON ? j.toJSON() : j;
+        const normalizedFallbackAccounts = fallbackAccountsJobs.map((j: any) => {
+          const externalData = j.toJSON ? j.toJSON() : j;
           let skillsArray: string[] = [];
-          if (aiData.skills) {
-            skillsArray = String(aiData.skills).split(',').map((s: string) => s.trim()).filter(Boolean);
+          if (externalData.skills) {
+            skillsArray = String(externalData.skills).split(',').map((s: string) => s.trim()).filter(Boolean);
           }
           
           let experienceNum = null;
-          if (aiData.experience) {
-            const expStr = String(aiData.experience).toLowerCase();
+          if (externalData.experience) {
+            const expStr = String(externalData.experience).toLowerCase();
             if (expStr.includes('fresher') || expStr.includes('entry') || expStr === '0') {
               experienceNum = 0;
             } else {
@@ -1227,26 +1227,26 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
           }
 
           return {
-            id: String(aiData.id || ''),
-            title: aiData.title || '',
-            company: aiData.company || '',
-            location: aiData.location || null,
-            type: aiData.job_type || null,
+            id: String(externalData.id || ''),
+            title: externalData.title || '',
+            company: externalData.company || '',
+            location: externalData.location || null,
+            type: externalData.job_type || null,
             category: null,
-            isRemote: (aiData.location && String(aiData.location).toLowerCase().includes('remote')) || false,
-            description: aiData.description || null,
-            experienceLevel: aiData.experience || null,
+            isRemote: (externalData.location && String(externalData.location).toLowerCase().includes('remote')) || false,
+            description: externalData.description || null,
+            experienceLevel: externalData.experience || null,
             experience: experienceNum !== null ? { min: experienceNum, max: null } : null,
             skills: skillsArray,
-            postedDate: aiData.posted_date || null,
-            createdAt: aiData.posted_date || null,
+            postedDate: externalData.posted_date || null,
+            createdAt: externalData.posted_date || null,
             salary: null,
-            jobUrl: aiData.job_url || null,
-            _source: 'ai'
+            jobUrl: externalData.job_url || null,
+            _source: 'accounts'
           };
         });
 
-        const allFallbackJobs = [...normalizedFallbackEmployer, ...normalizedFallbackAi];
+        const allFallbackJobs = [...normalizedFallbackEmployer, ...normalizedFallbackAccounts];
         categoryJobs = filterJobs(category, allFallbackJobs);
         categoryJobs = sortAndLimit(categoryJobs, 3);
       }
