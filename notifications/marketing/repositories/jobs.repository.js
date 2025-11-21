@@ -3,7 +3,7 @@ const { getSequelize } = require('../utils/sequelize');
 
 let notificationColumnsPromise = null;
 let jobColumnInfoPromise = null;
-let aiJobColumnInfoPromise = null;
+let accountsJobColumnInfoPromise = null;
 let currentDialect = 'mysql';
 let currentSchema = null;
 
@@ -139,6 +139,7 @@ async function resolveJobColumnInfo(sequelize) {
           categoryColumn: findColumn('category', 'job_category'),
           skillsColumn: findColumn('skillsRequired', 'skills'),
           educationColumn: findColumn('educationRequired', 'education_required', 'education'),
+          jobDescriptionColumn: findColumn('jobDescription', 'job_description'),
         };
       } else {
         const columns = await sequelize.query('SHOW COLUMNS FROM jobs', {
@@ -158,6 +159,7 @@ async function resolveJobColumnInfo(sequelize) {
           categoryColumn: findColumn('category', 'job_category'),
           skillsColumn: findColumn('skillsRequired', 'skills'),
           educationColumn: findColumn('educationRequired', 'education_required', 'education'),
+          jobDescriptionColumn: findColumn('jobDescription', 'job_description'),
         };
       }
     } catch (error) {
@@ -173,6 +175,7 @@ async function resolveJobColumnInfo(sequelize) {
         categoryColumn: 'category',
         skillsColumn: 'skillsRequired',
         educationColumn: 'educationRequired',
+        jobDescriptionColumn: null,
       };
     }
   };
@@ -189,14 +192,15 @@ async function resolveJobColumnInfo(sequelize) {
     categoryColumn: 'category',
     skillsColumn: 'skillsRequired',
     educationColumn: 'educationRequired',
+    jobDescriptionColumn: null,
   });
 
   return jobColumnInfoPromise;
 }
 
-async function resolveAiJobColumnInfo(sequelize) {
-  if (aiJobColumnInfoPromise) {
-    return aiJobColumnInfoPromise;
+async function resolveAccountsJobColumnInfo(sequelize) {
+  if (accountsJobColumnInfoPromise) {
+    return accountsJobColumnInfoPromise;
   }
 
   const dialect = sequelize.getDialect();
@@ -207,7 +211,7 @@ async function resolveAiJobColumnInfo(sequelize) {
       if (dialect === 'postgres') {
         const describe = await sequelize
           .getQueryInterface()
-          .describeTable({ tableName: 'aijobs', schema });
+          .describeTable({ tableName: 'accounts_jobdata', schema });
         const columns = Object.keys(describe || {}).map((name) => ({
           raw: name,
           lower: name.toLowerCase(),
@@ -226,9 +230,10 @@ async function resolveAiJobColumnInfo(sequelize) {
           categoryColumn: findColumn('category', 'job_type'),
           skillsColumn: findColumn('skills'),
           educationColumn: findColumn('educationRequired', 'education_required', 'education'),
+          slugColumn: findColumn('slug'),
         };
       } else {
-        const columns = await sequelize.query('SHOW COLUMNS FROM aijobs', {
+        const columns = await sequelize.query('SHOW COLUMNS FROM accounts_jobdata', {
           type: QueryTypes.SELECT,
         });
         const findColumn = buildColumnFinder(columns);
@@ -245,6 +250,7 @@ async function resolveAiJobColumnInfo(sequelize) {
           categoryColumn: findColumn('category', 'job_type'),
           skillsColumn: findColumn('skills'),
           educationColumn: findColumn('educationRequired', 'education_required', 'education'),
+          slugColumn: findColumn('slug'),
         };
       }
     } catch (error) {
@@ -261,11 +267,12 @@ async function resolveAiJobColumnInfo(sequelize) {
         categoryColumn: 'job_type',
         skillsColumn: 'skills',
         educationColumn: null,
+        slugColumn: null,
       };
     }
   };
 
-  aiJobColumnInfoPromise = buildSafeColumnInfo(buildColumnInfo, {
+  accountsJobColumnInfoPromise = buildSafeColumnInfo(buildColumnInfo, {
     createdColumn: null,
     postedColumn: 'posted_date',
     jobTypeColumn: 'job_type',
@@ -278,9 +285,10 @@ async function resolveAiJobColumnInfo(sequelize) {
     categoryColumn: 'job_type',
     skillsColumn: 'skills',
     educationColumn: null,
+    slugColumn: null,
   });
 
-  return aiJobColumnInfoPromise;
+  return accountsJobColumnInfoPromise;
 }
 
 async function ensureNotificationColumns(sequelize) {
@@ -344,8 +352,8 @@ async function ensureNotificationColumns(sequelize) {
 
     await addColumnIfMissing('jobs', 'notify_sent', notifySentDefinition);
     await addColumnIfMissing('jobs', 'notify_sent_at', notifySentAtDefinition);
-    await addColumnIfMissing('aijobs', 'notify_sent', notifySentDefinition);
-    await addColumnIfMissing('aijobs', 'notify_sent_at', notifySentAtDefinition);
+    await addColumnIfMissing('accounts_jobdata', 'notify_sent', notifySentDefinition);
+    await addColumnIfMissing('accounts_jobdata', 'notify_sent_at', notifySentAtDefinition);
   })();
 
   return notificationColumnsPromise;
@@ -357,7 +365,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
   async function fetchPendingJobs({ limit, createdAfter }) {
     await ensureNotificationColumns(sequelize);
     const columns = await resolveJobColumnInfo(sequelize);
-    const aiColumns = await resolveAiJobColumnInfo(sequelize);
+    const aiColumns = await resolveAccountsJobColumnInfo(sequelize);
 
     const createdColumnName = columns.createdColumn || 'createdAt';
     const jobTypeColumnName = columns.jobTypeColumn || 'type';
@@ -381,22 +389,27 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const skillsExpr = skillsColumnName ? qualifyColumn('jobs', skillsColumnName) : 'NULL';
     const educationExpr = educationColumnName ? `COALESCE(${qualifyColumn('jobs', educationColumnName)}, '')` : "''";
     const notifySentExpr = notifySentColumnName ? qualifyColumn('jobs', notifySentColumnName) : null;
+    const jobDescriptionColumnName = columns.jobDescriptionColumn;
+    const descriptionExpr = jobDescriptionColumnName
+      ? `COALESCE(${qualifyColumn('jobs', 'description')}, ${qualifyColumn('jobs', jobDescriptionColumnName)}, '')`
+      : `COALESCE(${qualifyColumn('jobs', 'description')}, '')`;
 
     const aiCreatedColumns = [aiColumns.createdColumn, aiColumns.postedColumn]
       .filter(Boolean)
-      .map((col) => qualifyColumn('aijobs', col));
+      .map((col) => qualifyColumn('accounts_jobdata', col));
     const aiCreatedExpr = aiCreatedColumns.length > 0 ? `COALESCE(${aiCreatedColumns.join(', ')})` : 'NULL';
-    const aiJobTypeExpr = aiColumns.jobTypeColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.jobTypeColumn)}, '')` : "''";
-    const aiRemoteExpr = aiColumns.remoteColumn ? qualifyColumn('aijobs', aiColumns.remoteColumn) : 'NULL';
-    const aiIdExpr = `${qualifyColumn('aijobs', 'id')}::text`;
-    const aiLocationTypeExpr = aiColumns.locationTypeColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.locationTypeColumn)}, '')` : "''";
-    const aiExperienceExpr = aiColumns.experienceColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.experienceColumn)}, '')` : "''";
-    const aiApplyUrlExpr = aiColumns.applyUrlColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.applyUrlColumn)}, '')` : "''";
-    const aiCategoryExpr = aiColumns.categoryColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.categoryColumn)}, '')` : "''";
-    const aiSkillsExpr = aiColumns.skillsColumn ? qualifyColumn('aijobs', aiColumns.skillsColumn) : 'NULL';
-    const aiEducationExpr = aiColumns.educationColumn ? `COALESCE(${qualifyColumn('aijobs', aiColumns.educationColumn)}, '')` : "''";
-    const aiNotifySentAtExpr = aiColumns.notifySentAtColumn ? qualifyColumn('aijobs', aiColumns.notifySentAtColumn) : 'NULL';
-    const aiNotifySentExpr = aiColumns.notifySentColumn ? qualifyColumn('aijobs', aiColumns.notifySentColumn) : null;
+    const aiJobTypeExpr = aiColumns.jobTypeColumn ? `COALESCE(${qualifyColumn('accounts_jobdata', aiColumns.jobTypeColumn)}, '')` : "''";
+    const aiRemoteExpr = aiColumns.remoteColumn ? qualifyColumn('accounts_jobdata', aiColumns.remoteColumn) : 'NULL';
+    const aiIdExpr = `${qualifyColumn('accounts_jobdata', 'id')}::text`;
+    const aiLocationTypeExpr = aiColumns.locationTypeColumn ? `COALESCE(${qualifyColumn('accounts_jobdata', aiColumns.locationTypeColumn)}, '')` : "''";
+    const aiExperienceExpr = aiColumns.experienceColumn ? `COALESCE(${qualifyColumn('accounts_jobdata', aiColumns.experienceColumn)}, '')` : "''";
+    const aiApplyUrlExpr = aiColumns.applyUrlColumn ? `COALESCE(${qualifyColumn('accounts_jobdata', aiColumns.applyUrlColumn)}, '')` : "''";
+    const aiCategoryExpr = aiColumns.categoryColumn ? `COALESCE(${qualifyColumn('accounts_jobdata', aiColumns.categoryColumn)}, '')` : "''";
+    const aiSkillsExpr = aiColumns.skillsColumn ? qualifyColumn('accounts_jobdata', aiColumns.skillsColumn) : 'NULL';
+    const aiEducationExpr = aiColumns.educationColumn ? `COALESCE(${qualifyColumn('accounts_jobdata', aiColumns.educationColumn)}, '')` : "''";
+    const aiNotifySentAtExpr = aiColumns.notifySentAtColumn ? qualifyColumn('accounts_jobdata', aiColumns.notifySentAtColumn) : 'NULL';
+    const aiNotifySentExpr = aiColumns.notifySentColumn ? qualifyColumn('accounts_jobdata', aiColumns.notifySentColumn) : null;
+    const aiSlugExpr = aiColumns.slugColumn ? `COALESCE(${qualifyColumn('accounts_jobdata', aiColumns.slugColumn)}, '')` : "''";
 
     const replacements = { limit };
     const hasCreatedAfter = createdAfter instanceof Date && !Number.isNaN(createdAfter.getTime());
@@ -412,15 +425,15 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const jobWhereClause = jobConditions.length > 0 ? `WHERE ${jobConditions.join(' AND ')}` : '';
 
     const aiCreatedFilterColumn =
-      aiColumns.createdColumn ? qualifyColumn('aijobs', aiColumns.createdColumn) : aiColumns.postedColumn ? qualifyColumn('aijobs', aiColumns.postedColumn) : null;
+      aiColumns.createdColumn ? qualifyColumn('accounts_jobdata', aiColumns.createdColumn) : aiColumns.postedColumn ? qualifyColumn('accounts_jobdata', aiColumns.postedColumn) : null;
 
     const aiConditions = [];
     if (aiNotifySentExpr) {
       aiConditions.push(`(${aiNotifySentExpr} = false OR ${aiNotifySentExpr} IS NULL)`);
     }
     if (hasCreatedAfter && aiCreatedFilterColumn) {
-      replacements.createdAfterAiJobs = createdAfter;
-      aiConditions.push(`${aiCreatedFilterColumn} >= :createdAfterAiJobs`);
+      replacements.createdAfteraccounts_jobdata = createdAfter;
+      aiConditions.push(`${aiCreatedFilterColumn} >= :createdAfteraccounts_jobdata`);
     }
     const aiWhereClause = aiConditions.length > 0 ? `WHERE ${aiConditions.join(' AND ')}` : '';
 
@@ -434,6 +447,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
             jobs.title AS title,
             jobs.company AS company_name,
             jobs.location AS location,
+            COALESCE(jobs.slug, '') AS slug,
             ${isRemoteExpr} AS is_remote,
             ${locationTypeExpr} AS location_type,
             ${createdColumnQualified} AS created_at,
@@ -445,18 +459,19 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
             ${categoryExpr} AS category,
             ${skillsExpr} AS skills,
             ${educationExpr} AS education_required,
-            COALESCE(jobs.description, jobs.jobDescription, '') AS description
+            ${descriptionExpr} AS description
           FROM ${qualifyTableName('jobs')} AS jobs
           ${jobWhereClause}
 
           UNION ALL
 
           SELECT
-            'aijobs' AS source,
+            'accounts_jobdata' AS source,
             ${aiIdExpr} AS id,
-            aijobs.title AS title,
-            aijobs.company AS company_name,
-            aijobs.location AS location,
+            accounts_jobdata.title AS title,
+            accounts_jobdata.company AS company_name,
+            accounts_jobdata.location AS location,
+            ${aiSlugExpr} AS slug,
             ${aiRemoteExpr} AS is_remote,
             ${aiLocationTypeExpr} AS location_type,
             ${aiCreatedExpr} AS created_at,
@@ -468,8 +483,8 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
             ${aiCategoryExpr} AS category,
             ${aiSkillsExpr} AS skills,
             ${aiEducationExpr} AS education_required,
-            COALESCE(aijobs.description, '') AS description
-          FROM ${qualifyTableName('aijobs')} AS aijobs
+            COALESCE(accounts_jobdata.description, '') AS description
+          FROM ${qualifyTableName('accounts_jobdata')} AS accounts_jobdata
           ${aiWhereClause}
         ) AS pending
         ORDER BY pending.created_at DESC
@@ -483,6 +498,15 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
 
     return rows.map((row) => {
       const skills = normalizeSkills(row.skills);
+      const jobData = {
+        source: row.source,
+        id: row.id,
+        title: row.title,
+        company: row.company_name,
+        location: row.location,
+        slug: row.slug || null,
+      };
+      const jobUrl = buildDefaultApplyUrl(row.source, row.id, jobData);
       return {
         source: row.source,
         id: row.id,
@@ -490,6 +514,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
         companyName: row.company_name,
         company: row.company_name,
         location: row.location,
+        slug: row.slug || null,
         isRemote: normalizeRemote(row.is_remote),
         locationType: row.location_type,
         createdAt: row.created_at ? new Date(row.created_at) : null,
@@ -497,8 +522,8 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
         notifySentAt: row.notify_sent_at ? new Date(row.notify_sent_at) : null,
         jobType: row.job_type,
         experience: row.experience,
-        applyUrl: row.apply_url || buildDefaultApplyUrl(row.source, row.id),
-        ctaUrl: buildDefaultApplyUrl(row.source, row.id),
+        applyUrl: row.apply_url || jobUrl,
+        ctaUrl: jobUrl,
         category: row.category || null,
         skills,
         educationRequired: row.education_required || null,
@@ -510,14 +535,14 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
   async function countPendingJobs({ createdAfter } = {}) {
     await ensureNotificationColumns(sequelize);
     const columns = await resolveJobColumnInfo(sequelize);
-    const aiColumns = await resolveAiJobColumnInfo(sequelize);
+    const aiColumns = await resolveAccountsJobColumnInfo(sequelize);
 
     const jobCreatedColumnName = columns.createdColumn || 'createdAt';
     const jobCreatedColumn = qualifyColumn('jobs', jobCreatedColumnName);
 
     const aiDateColumns = [aiColumns.createdColumn, aiColumns.postedColumn]
       .filter(Boolean)
-      .map((column) => qualifyColumn('aijobs', column));
+      .map((column) => qualifyColumn('accounts_jobdata', column));
     const aiDateExpression =
       aiDateColumns.length === 0
         ? null
@@ -533,7 +558,7 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     const aiNotifySentColumnName = aiColumns.notifySentColumn || 'notify_sent';
 
     const notifySentColumn = notifySentColumnName ? qualifyColumn('jobs', notifySentColumnName) : null;
-    const aiNotifySentColumn = aiNotifySentColumnName ? qualifyColumn('aijobs', aiNotifySentColumnName) : null;
+    const aiNotifySentColumn = aiNotifySentColumnName ? qualifyColumn('accounts_jobdata', aiNotifySentColumnName) : null;
 
     if (notifySentColumn) {
       jobConditions.push(`(${notifySentColumn} = false OR ${notifySentColumn} IS NULL)`);
@@ -546,21 +571,21 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
       replacements.createdAfterJobs = createdAfter;
       jobConditions.push(`${jobCreatedColumn} >= :createdAfterJobs`);
       if (aiDateExpression) {
-        replacements.createdAfterAiJobs = createdAfter;
-        aiConditions.push(`${aiDateExpression} >= :createdAfterAiJobs`);
+        replacements.createdAfteraccounts_jobdata = createdAfter;
+        aiConditions.push(`${aiDateExpression} >= :createdAfteraccounts_jobdata`);
       }
     }
 
     const jobsWhere = jobConditions.length > 0 ? `WHERE ${jobConditions.join(' AND ')}` : '';
     const aiWhere = aiConditions.length > 0 ? `WHERE ${aiConditions.join(' AND ')}` : '';
 
-    const [jobsCountRows, aiJobsCountRows] = await Promise.all([
+    const [jobsCountRows, accounts_jobdataCountRows] = await Promise.all([
       sequelize.query(`SELECT COUNT(*) AS total FROM ${qualifyTableName('jobs')} AS jobs ${jobsWhere}`, {
         replacements,
         type: QueryTypes.SELECT,
       }),
       aiDateExpression
-        ? sequelize.query(`SELECT COUNT(*) AS total FROM ${qualifyTableName('aijobs')} AS aijobs ${aiWhere}`, {
+        ? sequelize.query(`SELECT COUNT(*) AS total FROM ${qualifyTableName('accounts_jobdata')} AS accounts_jobdata ${aiWhere}`, {
             replacements,
             type: QueryTypes.SELECT,
           })
@@ -568,13 +593,13 @@ function createJobsRepository({ sequelize = getSequelize() } = {}) {
     ]);
 
     const jobsCount = Array.isArray(jobsCountRows) && jobsCountRows.length > 0 ? Number(jobsCountRows[0].total || 0) : 0;
-    const aiJobsCount =
-      Array.isArray(aiJobsCountRows) && aiJobsCountRows.length > 0 ? Number(aiJobsCountRows[0].total || 0) : 0;
-    return jobsCount + aiJobsCount;
+    const accounts_jobdataCount =
+      Array.isArray(accounts_jobdataCountRows) && accounts_jobdataCountRows.length > 0 ? Number(accounts_jobdataCountRows[0].total || 0) : 0;
+    return jobsCount + accounts_jobdataCount;
   }
 
   async function markJobsNotified(_jobIdsBySource) {
-    return { jobs: 0, aijobs: 0 };
+    return { jobs: 0, accounts_jobdata: 0 };
   }
 
   return {
@@ -633,12 +658,52 @@ function normalizeSkills(value) {
   return [String(value).trim()].filter((entry) => entry.length > 0);
 }
 
-function buildDefaultApplyUrl(source, id) {
-  const base = 'https://mycareerbuild.com';
-  if (source === 'aijobs') {
-    return `${base}/aijobs/${id}`;
+function toSlugSegment(input) {
+  if (!input) return '';
+  return String(input)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // remove diacritics
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '') // remove punctuation
+    .trim()
+    .replace(/\s+/g, '-') // spaces to hyphens
+    .replace(/-+/g, '-'); // collapse hyphens
+}
+
+function buildJobSlug(params) {
+  const titlePart = toSlugSegment(params.title);
+  const companyPart = toSlugSegment(params.company);
+  const locationRaw = params.location?.toString().trim();
+  const locationPart = locationRaw ? toSlugSegment(locationRaw.split(',')[0] || '') : '';
+  
+  const parts = [titlePart];
+  if (locationPart) parts.push(locationPart);
+  parts.push('at', companyPart, String(params.id).toLowerCase());
+  
+  return parts.filter(Boolean).join('-');
+}
+
+function buildDefaultApplyUrl(source, id, jobData = null) {
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  
+  // If we have job data with a slug, use it
+  if (jobData && jobData.slug) {
+    return `${frontendUrl}/jobs/${jobData.slug}`;
   }
-  return `${base}/jobs/${id}`;
+  
+  // If we have job data without slug, build it from title, company, location, id
+  if (jobData && jobData.title && jobData.company) {
+    const slug = buildJobSlug({
+      title: jobData.title,
+      company: jobData.company,
+      location: jobData.location || null,
+      id: id,
+    });
+    return `${frontendUrl}/jobs/${slug}`;
+  }
+  
+  // Fallback: use ID only (for backward compatibility)
+  return `${frontendUrl}/jobs/${id}`;
 }
 
 module.exports = {

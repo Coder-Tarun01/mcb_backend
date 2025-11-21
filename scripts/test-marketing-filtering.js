@@ -65,7 +65,7 @@ async function fetchContacts(contactId = null, allContacts = false) {
 }
 
 async function fetchJobs(limit = 50) {
-  // Fetch jobs from both jobs and aijobs tables
+  // Fetch jobs from both jobs and accounts_jobdata tables
   // Use the same columns that the marketing module uses
   // Note: jobs table doesn't have a 'branch' column - branch matching uses category, job_type, location_type, and skills
   // Use dialect-specific column names (PostgreSQL is case-sensitive)
@@ -110,9 +110,9 @@ async function fetchJobs(limit = 50) {
     ? 'COALESCE(skills::text, \'[]\') as skills'
     : 'COALESCE(skills, \'[]\') as skills';
   
-  // For aijobs, use only columns that definitely exist (id, title, company, location, job_type, experience, skills, posted_date)
+  // For accounts_jobdata, use only columns that definitely exist (id, title, company, location, job_type, experience, skills, posted_date)
   // Set missing columns to empty strings
-  const aiJobsQuery = `
+  const accounts_jobdataQuery = `
     SELECT 
       id,
       title,
@@ -123,11 +123,11 @@ async function fetchJobs(limit = 50) {
       '' as location_type,
       COALESCE(experience, '') as experience,
       ${aiSkillsCoalesce},
-      'aijobs' as source,
+      'accounts_jobdata' as source,
       COALESCE(notify_sent, false) as notify_sent,
       notify_sent_at,
       COALESCE(posted_date, NOW()) as created_at
-    FROM aijobs
+    FROM accounts_jobdata
     WHERE ${aiNotifySentCondition}
     ORDER BY posted_date DESC
     LIMIT :limit
@@ -138,7 +138,7 @@ async function fetchJobs(limit = 50) {
     type: QueryTypes.SELECT,
   });
   
-  const aiJobs = await sequelize.query(aiJobsQuery, {
+  const accounts_jobdata = await sequelize.query(accounts_jobdataQuery, {
     replacements: { limit },
     type: QueryTypes.SELECT,
   });
@@ -161,7 +161,7 @@ async function fetchJobs(limit = 50) {
   
   const allJobs = [
     ...(Array.isArray(jobs) ? jobs.map(parseSkills) : []),
-    ...(Array.isArray(aiJobs) ? aiJobs.map(parseSkills) : [])
+    ...(Array.isArray(accounts_jobdata) ? accounts_jobdata.map(parseSkills) : [])
   ];
   
   return allJobs;
@@ -341,7 +341,7 @@ async function testFiltering() {
     // Fetch jobs
     console.log('📋 Fetching jobs...');
     const jobs = await fetchJobs(100);
-    console.log(`✅ Found ${jobs.length} job(s) (${jobs.filter(j => j.source === 'jobs').length} from jobs, ${jobs.filter(j => j.source === 'aijobs').length} from aijobs)\n`);
+    console.log(`✅ Found ${jobs.length} job(s) (${jobs.filter(j => j.source === 'jobs').length} from jobs, ${jobs.filter(j => j.source === 'accounts_jobdata').length} from accounts_jobdata)\n`);
     
     if (jobs.length === 0) {
       console.log('⚠️  No jobs found. Insert some test jobs to verify filtering.\n');

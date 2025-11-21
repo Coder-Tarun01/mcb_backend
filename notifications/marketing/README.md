@@ -8,7 +8,7 @@ The marketing notification module sends periodic job digests to subscribed marke
 
 ## Key Features
 
-- Pulls pending jobs from `jobs` and `aijobs`, deduplicates, and composes personalized digests (top five roles per contact).
+- Pulls pending jobs from `jobs` and `accounts_jobdata`, deduplicates, and composes personalized digests (top five roles per contact).
 - **Personalized filtering**: Jobs are filtered by each contact's branch and experience level, ensuring different users receive different job recommendations.
 - Sends personalised HTML + text emails with unsubscribe guidance.
 - Optionally broadcasts the same personalized digest over Telegram for contacts linked with a chat id.
@@ -68,13 +68,13 @@ For production, store SMTP credentials in the secrets manager rather than `.env`
    - Hit `GET /notifications/marketing/health` with the health token; verify pending count > 0 and failure rate numbers load.
    - Trigger a manual run using `POST /notifications/marketing/trigger` with the admin key (`{ "force": true, "limit": 5 }`).
    - Confirm success/failure entries in `notifications/logs/marketing-success.log` and `marketing-failed.log`.
-   - Check `notify_sent` and `notify_sent_at` fields in `jobs` / `aijobs` for processed rows.
+   - Check `notify_sent` and `notify_sent_at` fields in `jobs` / `accounts_jobdata` for processed rows.
 
 ## Rollback
 
 1. Disable the scheduler by setting `MARKETING_EMAIL_ENABLED=false` or stopping the server.
 2. Remove the marketing module import if necessary (server restarts will not load the scheduler).
-3. Reset affected job rows: `UPDATE jobs SET notify_sent = 0, notify_sent_at = NULL WHERE notify_sent_at >= <timestamp>;` (repeat for `aijobs`).
+3. Reset affected job rows: `UPDATE jobs SET notify_sent = 0, notify_sent_at = NULL WHERE notify_sent_at >= <timestamp>;` (repeat for `accounts_jobdata`).
 4. Drop `marketing_contacts` if the table is not required: `DROP TABLE marketing_contacts;`.
 
 ## Operational Runbook
@@ -92,13 +92,13 @@ For production, store SMTP credentials in the secrets manager rather than `.env`
 ## Manual QA Procedure
 
 1. Seed `marketing_contacts` with test recipients.
-2. Insert sample jobs with `notify_sent = 0` in both `jobs` and `aijobs`.
+2. Insert sample jobs with `notify_sent = 0` in both `jobs` and `accounts_jobdata`.
 3. Run `POST /notifications/marketing/trigger { "force": true }`.
 4. Confirm:
    - Emails delivered (or dry-run log entries recorded).
    - Telegram messages delivered to linked chat ids (or dry-run log entries recorded).
    - `notify_sent` flipped to `1`.
-   - CTA links point to `https://mycareerbuild.com/jobs/{id}` or `/aijobs/{id}`.
+   - CTA links point to `https://mycareerbuild.com/jobs/{id}` or `/accounts_jobdata/{id}`.
    - Logs capture outcomes with matching batch IDs.
 
 ## Testing

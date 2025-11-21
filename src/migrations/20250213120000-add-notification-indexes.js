@@ -14,11 +14,11 @@ module.exports = {
     await addIndexIfNotExists('jobs', ['type'], { name: 'jobs_type_idx' });
     await addIndexIfNotExists('jobs', ['notify_sent'], { name: 'jobs_notify_sent_idx' });
 
-    // Add indexes to 'aijobs' table
-    await addIndexIfNotExists('aijobs', ['created_at'], { name: 'aijobs_created_at_idx' });
-    await addIndexIfNotExists('aijobs', ['posted_date'], { name: 'aijobs_posted_date_idx' });
-    await addIndexIfNotExists('aijobs', ['job_type'], { name: 'aijobs_job_type_idx' });
-    await addIndexIfNotExists('aijobs', ['notify_sent'], { name: 'aijobs_notify_sent_idx' });
+    // Add indexes to 'accounts_jobdata' table
+    await addIndexIfNotExists('accounts_jobdata', ['created_at'], { name: 'accounts_jobdata_created_at_idx' });
+    await addIndexIfNotExists('accounts_jobdata', ['posted_date'], { name: 'accounts_jobdata_posted_date_idx' });
+    await addIndexIfNotExists('accounts_jobdata', ['job_type'], { name: 'accounts_jobdata_job_type_idx' });
+    await addIndexIfNotExists('accounts_jobdata', ['notify_sent'], { name: 'accounts_jobdata_notify_sent_idx' });
 
     // Add index to marketing_contacts for email for faster lookups
     try {
@@ -41,10 +41,10 @@ module.exports = {
     await dropIndexIfExists('jobs', 'jobs_created_at_idx');
     await dropIndexIfExists('jobs', 'jobs_type_idx');
     await dropIndexIfExists('jobs', 'jobs_notify_sent_idx');
-    await dropIndexIfExists('aijobs', 'aijobs_created_at_idx');
-    await dropIndexIfExists('aijobs', 'aijobs_posted_date_idx');
-    await dropIndexIfExists('aijobs', 'aijobs_job_type_idx');
-    await dropIndexIfExists('aijobs', 'aijobs_notify_sent_idx');
+    await dropIndexIfExists('accounts_jobdata', 'accounts_jobdata_created_at_idx');
+    await dropIndexIfExists('accounts_jobdata', 'accounts_jobdata_posted_date_idx');
+    await dropIndexIfExists('accounts_jobdata', 'accounts_jobdata_job_type_idx');
+    await dropIndexIfExists('accounts_jobdata', 'accounts_jobdata_notify_sent_idx');
     
     try {
       await dropIndexIfExists('marketing_contacts', 'marketing_contacts_email_idx');

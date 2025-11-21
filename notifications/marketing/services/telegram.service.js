@@ -28,15 +28,25 @@ function resolvePrimaryLink(job) {
   if (!job) {
     return '';
   }
-  return (
-    job.applyUrl ||
-    job.ctaUrl ||
-    job.url ||
-    job.jobUrl ||
-    job.applicationUrl ||
-    job.redirectUrl ||
-    ''
-  );
+  // Prefer ctaUrl (should be set by repository with slug)
+  if (job.ctaUrl) {
+    return job.ctaUrl;
+  }
+  // Fallback to other URL fields
+  if (job.applyUrl || job.url || job.jobUrl || job.applicationUrl || job.redirectUrl) {
+    return job.applyUrl || job.url || job.jobUrl || job.applicationUrl || job.redirectUrl;
+  }
+  // Last resort: build URL from slug if we have job data
+  if (job.title && job.company && job.id) {
+    const { buildDefaultApplyUrl } = require('../repositories/jobs.repository');
+    return buildDefaultApplyUrl(job.source || 'jobs', job.id, {
+      title: job.title,
+      company: job.company || job.companyName,
+      location: job.location,
+      slug: job.slug || null,
+    });
+  }
+  return '';
 }
 
 function buildTelegramMessage({ contact, jobs }) {

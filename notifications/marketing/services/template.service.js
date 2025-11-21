@@ -16,6 +16,9 @@ function formatDate(date) {
   }
 }
 
+const MAX_JOBS_PER_EMAIL = 3;
+const TELEGRAM_BOT_URL = process.env.MARKETING_TELEGRAM_BOT_URL || 'https://t.me/mycareerbuildbot';
+
 function buildDigestTemplate({ contact, jobs, mailFrom }) {
   if (!contact || !Array.isArray(jobs)) {
     throw new Error('Contact and jobs are required to build digest template');
@@ -30,8 +33,14 @@ function buildDigestTemplate({ contact, jobs, mailFrom }) {
   }
   const profileLabel = profileParts.length > 0 ? ` (${profileParts.join(', ')})` : '';
 
-  const safeJobs = jobs.map((job) => {
-    const ctaUrl = job.applyUrl || job.ctaUrl || buildDefaultApplyUrl(job.source, job.id);
+  const safeJobs = jobs.slice(0, MAX_JOBS_PER_EMAIL).map((job) => {
+    // Use ctaUrl if already set (should be set by repository with slug), otherwise fallback
+    const ctaUrl = job.ctaUrl || job.applyUrl || buildDefaultApplyUrl(job.source, job.id, {
+      title: job.title,
+      company: job.company || job.companyName,
+      location: job.location,
+      slug: job.slug || null,
+    });
     return {
       ...job,
       ctaUrl,
@@ -67,7 +76,7 @@ function buildDigestTemplate({ contact, jobs, mailFrom }) {
             <tr>
               <td style="padding: 32px 40px; border-bottom: 1px solid #e6e9ed;">
                 <p style="margin: 0 0 12px; font-size: 16px; color: #1a1f36;">Dear ${escapeHtml(contact.fullName)},</p>
-                <p style="margin: 0; font-size: 16px; color: #1a1f36;">Based on your profile${profileLabel}, here are the top 3 opportunities we recommend for you:</p>
+                <p style="margin: 0; font-size: 16px; color: #1a1f36;">Based on your profile${profileLabel}, here are the top ${MAX_JOBS_PER_EMAIL} opportunities we recommend for you:</p>
               </td>
             </tr>
             <tr>
@@ -78,6 +87,7 @@ function buildDigestTemplate({ contact, jobs, mailFrom }) {
             <tr>
               <td style="padding: 24px 40px; border-top: 1px solid #e6e9ed;">
                 <p style="margin: 0 0 8px; font-size: 14px; color: #4f566b;">Need more options or wish to tailor your alerts further? Reply to this email and we’ll be glad to assist.</p>
+                <p style="margin: 0 0 8px; font-size: 14px; color: #4f566b;">🔔 Prefer instant alerts? Join our Telegram bot for real-time updates: <a href="${TELEGRAM_BOT_URL}" style="color: #2563eb; text-decoration: none;" target="_blank" rel="noopener noreferrer">${TELEGRAM_BOT_URL.replace(/^https?:\/\//, '')}</a></p>
                 <p style="margin: 0; font-size: 14px; color: #4f566b;">Warm regards,<br/>${escapeHtml(mailFrom.name)} Team</p>
               </td>
             </tr>
@@ -95,7 +105,7 @@ function buildDigestTemplate({ contact, jobs, mailFrom }) {
   const text = [
     `Dear ${contact.fullName},`,
     '',
-    `Based on your profile${profileLabel}, here are the top 3 opportunities we recommend for you:`,
+    `Based on your profile${profileLabel}, here are the top ${MAX_JOBS_PER_EMAIL} opportunities we recommend for you:`,
     '',
     ...safeJobs.map((job, index) => {
       const applyUrl = job.ctaUrl;
@@ -108,6 +118,8 @@ function buildDigestTemplate({ contact, jobs, mailFrom }) {
       ].join('\n');
     }),
     'Need more options or wish to tailor your alerts further? Reply to this email and we will be glad to assist.',
+    '',
+    `Prefer instant alerts? Join our Telegram bot: ${TELEGRAM_BOT_URL}`,
     '',
     `Warm regards,`,
     `${mailFrom.name} Team`,

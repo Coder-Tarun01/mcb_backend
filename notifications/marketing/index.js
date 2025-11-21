@@ -89,26 +89,35 @@ class MarketingNotificationOrchestrator {
     };
 
     try {
+      // When force is true, bypass the createdAfter filter to include all pending jobs
+      const createdAfterFilter = options.force ? null : this.config.createdAfter;
       const jobs = await this.jobsRepository.fetchPendingJobs({
         limit,
-        createdAfter: this.config.createdAfter,
+        createdAfter: createdAfterFilter,
       });
       summary.jobsQueried = jobs.length;
 
-      if (jobs.length === 0 && !options.force) {
+      if (jobs.length === 0) {
         summary.skipped = true;
-        summary.reason = 'No pending jobs found';
+        summary.reason = options.force 
+          ? 'No pending jobs found (all jobs may have been notified already)' 
+          : 'No pending jobs found';
         summary.ok = true;
+        if (options.force) {
+          console.log('[marketing.notifications] Force trigger found 0 pending jobs. All jobs may have notify_sent=true.');
+        }
         return summary;
       }
 
       const contacts = await this.contactsRepository.fetchContacts();
+      console.log(`[marketing.notifications] Found ${jobs.length} pending jobs and ${contacts.length} contacts`);
 
       if (contacts.length === 0) {
         summary.skipped = true;
         summary.reason = 'No marketing contacts available';
         summary.ok = false;
         summary.errors.push({ stage: 'contacts', message: 'No marketing contacts found' });
+        console.log('[marketing.notifications] No marketing contacts found');
         return summary;
       }
 
@@ -201,7 +210,7 @@ class MarketingNotificationOrchestrator {
       const combinedSuccesses = [...emailResult.successes, ...telegramResult.successes];
       if (combinedSuccesses.length > 0) {
         const jobIdsBySource = aggregateJobsBySource(combinedSuccesses, segmentation.contactJobsMap);
-        if ((jobIdsBySource.jobs && jobIdsBySource.jobs.length > 0) || (jobIdsBySource.aijobs && jobIdsBySource.aijobs.length > 0)) {
+        if ((jobIdsBySource.jobs && jobIdsBySource.jobs.length > 0) || (jobIdsBySource.accounts_jobdata && jobIdsBySource.accounts_jobdata.length > 0)) {
           await this.jobsRepository.markJobsNotified(jobIdsBySource);
           summary.jobsMarkedNotified = jobIdsBySource;
         } else {
@@ -301,7 +310,6 @@ function buildPersonalizedDigests({ contacts, jobs, digestSize }) {
   const normalizedLimit = Math.max(1, digestLimit);
 
   const allJobs = Array.isArray(jobs) ? jobs : [];
-  const allAiJobs = allJobs.filter((job) => job && job.source === 'aijobs');
 
   const contactJobsMap = new Map();
   const skippedContacts = [];
@@ -320,7 +328,6 @@ function buildPersonalizedDigests({ contacts, jobs, digestSize }) {
     const selection = selectJobsForContact(contact, {
       allJobs,
       fresherJobs: allJobs.filter(isFresherJob),
-      aiJobs: allAiJobs,
       digestLimit: normalizedLimit,
     });
 
@@ -787,7 +794,7 @@ function normalizeToken(value) {
 
 function aggregateJobsBySource(successes, contactJobsMap) {
   const jobsSet = new Set();
-  const aiJobsSet = new Set();
+  const accountsJobSet = new Set();
 
   if (Array.isArray(successes)) {
     for (const result of successes) {
@@ -802,8 +809,8 @@ function aggregateJobsBySource(successes, contactJobsMap) {
         if (!job || job.id === undefined || job.id === null) {
           continue;
         }
-        if (job.source === 'aijobs') {
-          aiJobsSet.add(job.id);
+        if (job.source === 'accounts_jobdata') {
+          accountsJobSet.add(job.id);
         } else {
           jobsSet.add(job.id);
         }
@@ -815,8 +822,8 @@ function aggregateJobsBySource(successes, contactJobsMap) {
   if (jobsSet.size > 0) {
     payload.jobs = Array.from(jobsSet);
   }
-  if (aiJobsSet.size > 0) {
-    payload.aijobs = Array.from(aiJobsSet);
+  if (accountsJobSet.size > 0) {
+    payload.accounts_jobdata = Array.from(accountsJobSet);
   }
   return payload;
 }

@@ -145,5 +145,7 @@ export async function readNotificationLogs(limit: number) {
   };
 
   const [success, failed] = await Promise.all([readLog(SUCCESS_LOG), readLog(FAILED_LOG)]);
-  return { success, failed };
+  // Filter out SKIP entries from success logs
+  const filteredSuccess = success.filter((entry) => entry.status !== 'SKIP');
+  return { success: filteredSuccess, failed };
 }

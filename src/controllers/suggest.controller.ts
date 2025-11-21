@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { performance } from 'node:perf_hooks';
 import { Op } from 'sequelize';
 import Fuse from 'fuse.js';
-import { Job, Company, User, AiJob } from '../models';
+import { Job, Company, User, AccountsJobData } from '../models';
 import { AuthRequest } from '../middleware/auth';
 
 type SuggestionCategory = 'jobs' | 'companies' | 'skills' | 'locations';
@@ -167,7 +167,7 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
   const likePattern = `%${normalizedQuery}%`;
   const limit = normalizedQuery ? 200 : 120;
 
-  const [jobRecords, companyRecords, aiJobRecords] = await Promise.all([
+  const [jobRecords, companyRecords, externalJobRecords] = await Promise.all([
     Job.findAll({
       where: normalizedQuery
         ? {
@@ -204,7 +204,7 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
       limit: 120,
       order: [['updatedAt', 'DESC']],
     }),
-    AiJob.findAll({
+    AccountsJobData.findAll({
       where: normalizedQuery
         ? {
             [Op.or]: [
@@ -231,7 +231,7 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
       weight: job.createdAt ? new Date(job.createdAt).getTime() : 0,
     }))
       .filter((item) => sanitizeString(item.value)),
-    ...aiJobRecords
+    ...externalJobRecords
       .map((job) => {
         const jobData = job.toJSON() as {
           title?: string | null;
