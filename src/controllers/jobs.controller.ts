@@ -117,7 +117,7 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
           const numbers = expStr.match(/\d+/g);
           if (numbers && numbers.length > 0) {
             expMin = parseInt(numbers[0], 10);
-            if (numbers.length > 1) {
+            if (numbers.length > 1 && numbers[1]) {
               expMax = parseInt(numbers[1], 10);
             }
           }
@@ -175,7 +175,7 @@ export async function listJobs(req: Request, res: Response, next: NextFunction) 
           const numbers = expStr.match(/\d+/g);
           if (numbers && numbers.length > 0) {
             expMin = parseInt(numbers[0], 10);
-            if (numbers.length > 1) {
+            if (numbers.length > 1 && numbers[1]) {
               expMax = parseInt(numbers[1], 10);
             }
           }
@@ -1037,7 +1037,9 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
           experienceNum = 0;
         } else {
           const match = expStr.match(/(\d+)/);
-          if (match) experienceNum = parseInt(match[1], 10);
+          if (match && match[1]) {
+            experienceNum = parseInt(match[1], 10);
+          }
         }
       }
 
@@ -1222,7 +1224,9 @@ export async function getHomePageJobs(req: Request, res: Response, next: NextFun
               experienceNum = 0;
             } else {
               const match = expStr.match(/(\d+)/);
-              if (match) experienceNum = parseInt(match[1], 10);
+              if (match && match[1]) {
+                experienceNum = parseInt(match[1], 10);
+              }
             }
           }
 

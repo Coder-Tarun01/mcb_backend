@@ -162,14 +162,15 @@ const findContactByName = async (fullName: string): Promise<MatchResult | null> 
     );
   }
 
-  if (rows.length === 0) {
+  if (rows.length === 0 || !rows[0]) {
     return null;
   }
 
+  const contact = rows[0];
   return {
-    contactId: rows[0].id,
+    contactId: contact.id,
     matchType: 'name',
-    fullName: rows[0].full_name ?? null,
+    fullName: contact.full_name ?? null,
   };
 };
 
@@ -252,6 +253,11 @@ const findContactByMobile = async (rawMobile?: string): Promise<MatchResult | nu
   }
 
   if (rows.length === 0) {
+    console.log(`[Telegram] No contact found with mobile number: "${normalized}"`);
+    return null;
+  }
+
+  if (!rows[0]) {
     console.log(`[Telegram] No contact found with mobile number: "${normalized}"`);
     return null;
   }
@@ -440,11 +446,12 @@ const processUpdate = async (update: TelegramUpdate): Promise<{
         }
       );
 
-      if (verifyContact.length === 0) {
+      if (verifyContact.length === 0 || !verifyContact[0]) {
         throw new Error(`Contact with id=${match.contactId} not found in database`);
       }
 
-      console.log(`[Telegram] Contact found: id=${match.contactId}, current_chat_id=${verifyContact[0].telegram_chat_id || 'null'}`);
+      const contact = verifyContact[0];
+      console.log(`[Telegram] Contact found: id=${match.contactId}, current_chat_id=${contact.telegram_chat_id || 'null'}`);
 
       // Update the telegram_chat_id
       const updateResult = await sequelize.query(
@@ -501,11 +508,12 @@ const processUpdate = async (update: TelegramUpdate): Promise<{
         }
       );
 
-      if (verifyRows.length === 0) {
+      if (verifyRows.length === 0 || !verifyRows[0]) {
         throw new Error(`Contact with id=${match.contactId} not found during verification`);
       }
 
-      const storedChatId = verifyRows[0].telegram_chat_id;
+      const verifyRow = verifyRows[0];
+      const storedChatId = verifyRow.telegram_chat_id;
       console.log(`[Telegram] Verification: stored_chat_id=${storedChatId}, expected=${chatId}`);
 
       if (storedChatId !== String(chatId)) {

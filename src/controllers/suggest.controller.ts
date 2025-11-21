@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { performance } from 'node:perf_hooks';
 import { Op } from 'sequelize';
-import Fuse from 'fuse.js';
+import Fuse, { IFuseOptions } from 'fuse.js';
 import { Job, Company, User, AccountsJobData } from '../models';
 import { AuthRequest } from '../middleware/auth';
 
@@ -28,7 +28,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_RESULTS_PER_CATEGORY = 8;
 const cache = new Map<string, CacheEntry>();
 
-const fuseStringOptions: Fuse.IFuseOptions<{ value: string; weight?: number; extra?: string }> = {
+const fuseStringOptions: IFuseOptions<{ value: string; weight?: number; extra?: string }> = {
   includeScore: true,
   shouldSort: true,
   threshold: 0.35,
@@ -260,15 +260,15 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
         extra: job.category ?? undefined,
       }))
       .filter((item) => sanitizeString(item.value)),
-    ...aiJobRecords
-      .map((job) => {
+    ...externalJobRecords
+      .map((job: any) => {
         const jobData = job.toJSON() as { company?: string | null; job_type?: string | null };
         return {
           value: jobData.company ?? '',
           extra: jobData.job_type ?? undefined,
         };
       })
-      .filter((item) => sanitizeString(item.value)),
+      .filter((item: { value: string; extra?: string }) => sanitizeString(item.value)),
   ];
 
   const skillCandidates: string[] = [
@@ -278,7 +278,7 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
         .map((skill) => sanitizeString(typeof skill === 'string' ? skill : String(skill)))
         .filter((skill): skill is string => Boolean(skill));
     }),
-    ...aiJobRecords.flatMap((job) => {
+    ...externalJobRecords.flatMap((job: any) => {
       const jobData = job.toJSON() as { skills?: string | string[] | null };
       return parseSkills(jobData.skills);
     }),
@@ -289,12 +289,12 @@ async function buildSuggestionPayload(query: string): Promise<SuggestionResponse
       .flatMap((job) => [job.location, job.city, job.state, job.country])
       .map((value) => sanitizeString(value))
       .filter((value): value is string => Boolean(value)),
-    ...aiJobRecords
-      .map((job) => {
+    ...externalJobRecords
+      .map((job: any) => {
         const jobData = job.toJSON() as { location?: string | null };
         return sanitizeString(jobData.location);
       })
-      .filter((value): value is string => Boolean(value)),
+      .filter((value: string | null): value is string => Boolean(value)),
   ];
 
   const jobSuggestions = normalizedQuery

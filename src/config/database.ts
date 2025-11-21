@@ -95,7 +95,6 @@ const sequelizeOptions: Options = {
     acquire: 60000,
     idle: 20000,
     evict: 1000,
-    handleDisconnects: true
   },
   // Retry policy to mitigate transient network issues
   retry: {
